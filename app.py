@@ -413,7 +413,7 @@ if page == "Übersicht":
         _pca_plot["Fraktion"] = _pca_plot["FractionAbbr"].apply(frac_label)
         _fig_pca = px.scatter(
             _pca_plot,
-            x="PC1", y="PC2",
+            x="PC1", y="Abweichung (%)",
             color="FractionAbbr",
             color_discrete_map=frac_color_map(),
             hover_name="Name",
@@ -423,10 +423,11 @@ if page == "Übersicht":
                 "CouncilAbbr": True,
                 "CantonAbbr": True,
                 "Abweichung (%)": True,
-                "PC1": False, "PC2": False,
+                "PC1": False,
             },
             category_orders={"FractionAbbr": FRAC_ORDER},
-            labels={"CouncilAbbr": "Rat", "CantonAbbr": "Kanton"},
+            labels={"CouncilAbbr": "Rat", "CantonAbbr": "Kanton",
+                    "Abweichung (%)": "Abweichung vom Fraktionskurs (%)"},
         )
         _fig_pca.update_traces(
             marker=dict(size=9, opacity=0.82, line=dict(width=0.5, color="white"))
@@ -439,15 +440,17 @@ if page == "Übersicht":
             legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center"),
             xaxis=dict(showticklabels=False, showgrid=True, zeroline=False,
                        title="← Links  ·  Politische Achse  ·  Rechts →"),
-            yaxis=dict(showticklabels=False, showgrid=True, zeroline=False, title=""),
+            yaxis=dict(showgrid=True, zeroline=False,
+                       title="Abweichung vom Fraktionskurs (%)"),
             height=480,
-            margin=dict(l=20, r=20, t=20, b=60),
+            margin=dict(l=50, r=20, t=20, b=60),
         )
         st.plotly_chart(_fig_pca, use_container_width=True)
         st.caption(
-            "Jeder Punkt ist ein Parlamentsmitglied, positioniert anhand seines tatsächlichen "
-            "Abstimmungsverhaltens — nicht nach Parteizugehörigkeit. Ein SVP-Mitglied, das häufig "
-            "mit SP stimmt, erscheint links. Hover für Name und Details."
+            "Jeder Punkt ist ein Parlamentsmitglied. X-Achse: politische Position anhand des "
+            "tatsächlichen Abstimmungsverhaltens — ein SVP-Mitglied, das häufig gegen links abweicht, "
+            "wird links von anderen SVP-Mitgliedern dargestellt. Y-Achse: Abweichungsrate vom "
+            "Fraktionskurs. Hover für Name und Details."
         )
 
     st.markdown("---")
