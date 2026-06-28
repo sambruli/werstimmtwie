@@ -109,9 +109,42 @@ def get_sessions():
 def get_positions():
     return compute_fraction_positions(get_all_votes(), get_members())
 
+@st.cache_data(ttl=3600, show_spinner="Berechne Abweichungsraten…")
+def get_all_mp_deviations():
+    """Deviation rate for every MP across all votes, using positions matrix for speed."""
+    av  = get_all_votes()
+    m   = get_members()
+    pos = get_positions()
+
+    active_dec = {"Ja", "Nein", "Enthaltung"}
+    active = av[av["DecisionNorm"].isin(active_dec)].copy()
+
+    mp_fracs = m.set_index("PersonNumber")["FractionAbbr"]
+    active["FractionAbbr"] = active["PersonNumber"].map(mp_fracs)
+
+    pos_long = pos.stack().reset_index()
+    pos_long.columns = ["GroupKey", "FractionAbbr", "FracMajority"]
+
+    active = active.merge(pos_long, on=["GroupKey", "FractionAbbr"], how="left")
+    active = active.dropna(subset=["FracMajority"])
+    active["Deviated"] = active["DecisionNorm"] != active["FracMajority"]
+
+    agg = active.groupby("PersonNumber").agg(
+        Total=("DecisionNorm", "count"),
+        Deviated=("Deviated", "sum"),
+    ).reset_index()
+    agg["Abweichung (%)"] = (agg["Deviated"] / agg["Total"] * 100).round(1)
+
+    info = m[["PersonNumber", "FirstName", "LastName", "FractionAbbr",
+              "CouncilAbbr", "CantonAbbr"]]
+    agg = agg.merge(info, on="PersonNumber", how="left")
+    agg["Name"] = agg["FirstName"] + " " + agg["LastName"]
+    return agg
+
 def clear_cache():
     for fn in (get_members, get_all_votes, get_mp_votes,
-               get_fraction_votes, get_sessions, get_positions):
+               get_fraction_votes, get_sessions, get_positions,
+               get_all_mp_deviations):
         fn.clear()
 
 def _has_db() -> bool:
@@ -272,42 +305,63 @@ if page == "Übersicht":
     st.subheader("Methodik")
     st.info(_METHODOLOGY)
 
-    # ── Fraktions-Alignment-Heatmap ───────────────────────────────────────
+    # ── Deviation strip chart ─────────────────────────────────────────────
     st.markdown("---")
-    st.subheader("Wie oft stimmen die Fraktionen gemeinsam ab?")
+    st.subheader("Abweichung vom Fraktionskurs — alle Parlamentsmitglieder")
     st.caption(
-        "Prozentualer Anteil der Abstimmungen, bei denen zwei Fraktionen dieselbe Mehrheitsposition einnahmen."
+        "Jeder Punkt ist ein Parlamentsmitglied. "
+        "Weiter rechts = häufiger gegen die eigene Fraktion gestimmt. "
+        "Hover für Name, Kanton und Details."
     )
 
-    with st.spinner("Berechne Fraktionsübereinstimmung…"):
-        _pos = get_positions()
+    with st.spinner("Berechne Abweichungsraten aller Mitglieder…"):
+        _dev_all = get_all_mp_deviations()
 
-    _fracs_in_pos = [f for f in FRAC_ORDER if f in _pos.columns]
-    if len(_fracs_in_pos) >= 2:
-        import numpy as np
-        _align = pd.DataFrame(index=_fracs_in_pos, columns=_fracs_in_pos, dtype=float)
-        for _f1 in _fracs_in_pos:
-            for _f2 in _fracs_in_pos:
-                _both = _pos[[_f1, _f2]].dropna()
-                _align.loc[_f1, _f2] = round((_both[_f1] == _both[_f2]).mean() * 100, 1) if len(_both) else float("nan")
-        _align.index   = [frac_label(f) for f in _fracs_in_pos]
-        _align.columns = [frac_label(f) for f in _fracs_in_pos]
-        _fig_align = px.imshow(
-            _align,
-            color_continuous_scale="RdYlGn",
-            zmin=40, zmax=100,
-            text_auto=True,
-            aspect="auto",
-            labels=dict(color="Übereinstimmung (%)"),
-            title="Fraktionsübereinstimmung — Abstimmungen Legislatur 52",
+    if not _dev_all.empty:
+        _strip = _dev_all[_dev_all["FractionAbbr"].isin(FRAC_ORDER)].copy()
+        _strip["Fraktion"] = _strip["FractionAbbr"].apply(frac_label)
+        _frac_label_order = list(reversed(frac_order_labels()))
+
+        _fig_strip = px.strip(
+            _strip,
+            x="Abweichung (%)",
+            y="Fraktion",
+            color="FractionAbbr",
+            color_discrete_map=frac_color_map(),
+            hover_name="Name",
+            hover_data={
+                "FractionAbbr": False,
+                "Fraktion": True,
+                "CouncilAbbr": True,
+                "CantonAbbr": True,
+                "Total": True,
+                "Deviated": True,
+                "Abweichung (%)": True,
+            },
+            category_orders={"Fraktion": _frac_label_order},
+            stripmode="overlay",
+            title="Abweichung vom Fraktionskurs — Legislatur 52",
+            labels={
+                "CouncilAbbr": "Rat",
+                "CantonAbbr": "Kanton",
+                "Total": "Abstimmungen",
+                "Deviated": "Abweichungen",
+            },
         )
-        _fig_align.update_layout(
-            coloraxis_colorbar=dict(title=""),
-            xaxis_title="", yaxis_title="",
+        _fig_strip.update_traces(
+            marker=dict(size=8, opacity=0.7, line=dict(width=0.5, color="white")),
+            jitter=0.6,
         )
-        st.plotly_chart(_fig_align, use_container_width=True)
+        _fig_strip.update_layout(
+            showlegend=False,
+            xaxis=dict(title="Abweichung (%)", range=[-1, _strip["Abweichung (%)"].max() + 2]),
+            yaxis_title="",
+            height=380,
+            margin=dict(l=10, r=10, t=50, b=10),
+        )
+        st.plotly_chart(_fig_strip, use_container_width=True)
     else:
-        st.caption("Nicht genügend Daten für die Heatmap.")
+        st.caption("Nicht genügend Daten.")
 
 # ════════════════════════════════════════════════════════════════════════════
 # 2. THEMA
