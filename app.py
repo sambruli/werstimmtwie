@@ -59,8 +59,7 @@ FRAC_COLORS = {
 }
 
 def frac_label(abbr: str) -> str:
-    name = FRAC_NAMES.get(str(abbr), "")
-    return f"{abbr} ({name})" if name else str(abbr)
+    return FRAC_NAMES.get(str(abbr), str(abbr))
 
 def frac_color_map(*extra_dicts) -> dict:
     """Color map keyed by both abbreviation and readable label, for use in plotly charts."""
@@ -168,6 +167,70 @@ def get_topic_fraction_cohesion():
     return pd.DataFrame(rows)
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def get_mp_fraction_alignment():
+    """246×6 matrix: % of each MP's active votes agreeing with each fraction's majority."""
+    av  = get_all_votes()
+    m   = get_members()
+    pos = get_positions()
+
+    active_dec = {"Ja", "Nein", "Enthaltung"}
+    active = av[av["DecisionNorm"].isin(active_dec)][
+        ["PersonNumber", "GroupKey", "DecisionNorm"]
+    ]
+    pos_long = pos[FRAC_ORDER].stack().reset_index()
+    pos_long.columns = ["GroupKey", "FracCol", "FracMajority"]
+
+    merged = active.merge(pos_long, on="GroupKey", how="inner")
+    merged["Agrees"] = merged["DecisionNorm"] == merged["FracMajority"]
+
+    agg = (
+        merged.groupby(["PersonNumber", "FracCol"])["Agrees"]
+        .mean()
+        .mul(100).round(1)
+        .reset_index()
+        .rename(columns={"Agrees": "Agreement (%)"})
+    )
+    pivot = agg.pivot(index="PersonNumber", columns="FracCol", values="Agreement (%)").reset_index()
+    pivot.columns.name = None
+
+    info = m[["PersonNumber", "FirstName", "LastName", "FractionAbbr", "CouncilAbbr", "CantonAbbr"]]
+    pivot = pivot.merge(info, on="PersonNumber", how="left")
+    pivot["Name"] = pivot["FirstName"] + " " + pivot["LastName"]
+    return pivot
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_mp_pca():
+    """PCA on the 6D fraction-alignment vectors → 2D political compass."""
+    import numpy as np
+    aln = get_mp_fraction_alignment()
+    if aln.empty:
+        return pd.DataFrame()
+
+    frac_cols = [f for f in FRAC_ORDER if f in aln.columns]
+    mat = aln[frac_cols].values.astype(float)
+
+    col_means = np.nanmean(mat, axis=0)
+    for j in range(mat.shape[1]):
+        mat[np.isnan(mat[:, j]), j] = col_means[j]
+
+    mat_c = mat - mat.mean(axis=0)
+    U, S, _ = np.linalg.svd(mat_c, full_matrices=False)
+    coords = U[:, :2] * S[:2]
+
+    result = pd.DataFrame({
+        "PersonNumber": aln["PersonNumber"].values,
+        "PC1": coords[:, 0],
+        "PC2": coords[:, 1],
+    })
+    info = get_members()[["PersonNumber", "FirstName", "LastName",
+                           "FractionAbbr", "CouncilAbbr", "CantonAbbr"]]
+    result = result.merge(info, on="PersonNumber", how="left")
+    result["Name"] = result["FirstName"] + " " + result["LastName"]
+    dev = get_all_mp_deviations()[["PersonNumber", "Abweichung (%)"]]
+    result = result.merge(dev, on="PersonNumber", how="left")
+    return result
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_sunburst_data():
     """Build ids/labels/parents/values/colors arrays for the Übersicht sunburst."""
     dev = get_all_mp_deviations()
@@ -202,7 +265,7 @@ def clear_cache():
     for fn in (get_members, get_all_votes, get_mp_votes,
                get_fraction_votes, get_sessions, get_positions,
                get_all_mp_deviations, get_topic_fraction_cohesion,
-               get_sunburst_data):
+               get_mp_fraction_alignment, get_mp_pca, get_sunburst_data):
         fn.clear()
 
 def _has_db() -> bool:
@@ -341,30 +404,50 @@ if page == "Übersicht":
         "bei welchen Themen, in welche Richtung, und im Vergleich zu anderen Fraktionen?"
     )
 
-    # ── Sunburst ──────────────────────────────────────────────────────────
-    with st.spinner("Lade Übersicht…"):
-        _sb_ids, _sb_labels, _sb_parents, _sb_values, _sb_colors = get_sunburst_data()
+    # ── PCA political compass ─────────────────────────────────────────────
+    with st.spinner("Berechne politische Landkarte…"):
+        _pca = get_mp_pca()
 
-    if _sb_ids:
-        _fig_sb = go.Figure(go.Sunburst(
-            ids=_sb_ids, labels=_sb_labels, parents=_sb_parents,
-            values=_sb_values,
-            marker=dict(colors=_sb_colors),
-            branchvalues="total",
-            insidetextorientation="radial",
-            hovertemplate="<b>%{label}</b><br>%{value} Stimmen<extra></extra>",
-            textfont=dict(size=11),
-        ))
-        _fig_sb.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)",
-            margin=dict(l=0, r=0, t=0, b=0),
-            height=520,
+    if not _pca.empty:
+        _pca_plot = _pca[_pca["FractionAbbr"].isin(FRAC_ORDER)].copy()
+        _pca_plot["Fraktion"] = _pca_plot["FractionAbbr"].apply(frac_label)
+        _fig_pca = px.scatter(
+            _pca_plot,
+            x="PC1", y="PC2",
+            color="FractionAbbr",
+            color_discrete_map=frac_color_map(),
+            hover_name="Name",
+            hover_data={
+                "FractionAbbr": False,
+                "Fraktion": True,
+                "CouncilAbbr": True,
+                "CantonAbbr": True,
+                "Abweichung (%)": True,
+                "PC1": False, "PC2": False,
+            },
+            category_orders={"FractionAbbr": FRAC_ORDER},
+            labels={"CouncilAbbr": "Rat", "CantonAbbr": "Kanton"},
         )
-        st.plotly_chart(_fig_sb, use_container_width=True)
+        _fig_pca.update_traces(
+            marker=dict(size=9, opacity=0.82, line=dict(width=0.5, color="white"))
+        )
+        _fig_pca.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            showlegend=True,
+            legend_title="",
+            legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center"),
+            xaxis=dict(showticklabels=False, showgrid=True, zeroline=False,
+                       title="← Links  ·  Politische Achse  ·  Rechts →"),
+            yaxis=dict(showticklabels=False, showgrid=True, zeroline=False, title=""),
+            height=480,
+            margin=dict(l=20, r=20, t=20, b=60),
+        )
+        st.plotly_chart(_fig_pca, use_container_width=True)
         st.caption(
-            "Innerer Ring: Fraktionen. Mittlerer Ring: Parlamentsmitglieder. "
-            "Äusserer Ring: Abstimmungen im Einklang mit der Fraktion (Farbe) vs. abweichend (grau). "
-            "Klicken zum Hineinzoomen."
+            "Jeder Punkt ist ein Parlamentsmitglied, positioniert anhand seines tatsächlichen "
+            "Abstimmungsverhaltens — nicht nach Parteizugehörigkeit. Ein SVP-Mitglied, das häufig "
+            "mit SP stimmt, erscheint links. Hover für Name und Details."
         )
 
     st.markdown("---")
@@ -699,65 +782,12 @@ elif page == "Mitglied":
 
     st.title("Suche nach Mitgliedern des Parlaments")
 
-    # ── Deviation strip chart (welcome visual) ────────────────────────────
-    with st.spinner("Lade Übersicht…"):
-        _dev_mp = get_all_mp_deviations()
-
-    if not _dev_mp.empty:
-        _strip_mp = _dev_mp[_dev_mp["FractionAbbr"].isin(FRAC_ORDER)].copy()
-        _strip_mp["Fraktion"] = _strip_mp["FractionAbbr"].apply(frac_label)
-
-        _fig_mp_strip = px.strip(
-            _strip_mp,
-            x="Abweichung (%)",
-            y="Fraktion",
-            color="FractionAbbr",
-            color_discrete_map=frac_color_map(),
-            hover_name="Name",
-            hover_data={
-                "FractionAbbr": False,
-                "Fraktion": True,
-                "CouncilAbbr": True,
-                "CantonAbbr": True,
-                "Total": True,
-                "Deviated": True,
-                "Abweichung (%)": True,
-            },
-            category_orders={"Fraktion": list(reversed(frac_order_labels()))},
-            stripmode="overlay",
-            labels={
-                "CouncilAbbr": "Rat",
-                "CantonAbbr": "Kanton",
-                "Total": "Abstimmungen",
-                "Deviated": "Abweichungen",
-            },
-        )
-        _fig_mp_strip.update_traces(
-            marker=dict(size=8, opacity=0.7, line=dict(width=0.5, color="white")),
-            jitter=0.6,
-        )
-        _fig_mp_strip.update_layout(
-            showlegend=False,
-            xaxis=dict(
-                title="Abweichung vom Fraktionskurs (%)",
-                range=[-1, _strip_mp["Abweichung (%)"].max() + 2],
-            ),
-            yaxis_title="",
-            height=380,
-            margin=dict(l=10, r=10, t=20, b=10),
-        )
-        st.plotly_chart(_fig_mp_strip, use_container_width=True)
-
-    st.markdown("---")
-
     # ── Search controls ───────────────────────────────────────────────────
-    # Handle cross-page navigation (e.g. from Geschäft page)
     target_pn = st.session_state.pop("_nav_pn", None)
     if target_pn:
         st.session_state["mp_frac_filter"]   = "Alle"
         st.session_state["mp_canton_filter"] = "Alle"
 
-    # Fraction + Canton filters on one row
     all_fracs = sorted(members["FractionAbbr"].dropna().unique())
     _fc1, _fc2 = st.columns(2)
     with _fc1:
@@ -778,7 +808,6 @@ elif page == "Mitglied":
             key="mp_canton_filter",
         )
 
-    # Apply filters
     filtered = members.copy()
     if frac_filter != "Alle":
         for a in all_fracs:
@@ -792,25 +821,86 @@ elif page == "Mitglied":
         st.warning("Keine Mitglieder für diese Kombination.")
         st.stop()
 
-    # Name search — full width, with placeholder (no default selection)
     _sorted = filtered.sort_values(["LastName", "FirstName"])
     _mp_labels = ["— Name eingeben oder auswählen —"] + [
         member_label(r) for _, r in _sorted.iterrows()
     ]
     _mp_pns = [None] + [int(r["PersonNumber"]) for _, r in _sorted.iterrows()]
-
     _sel_idx = 0
     if target_pn and int(target_pn) in _mp_pns:
         _sel_idx = _mp_pns.index(int(target_pn))
-
     _sel_label = st.selectbox(
-        "🔍 Mitglied suchen",
-        _mp_labels,
-        index=_sel_idx,
-        key="mp_sel",
-        help="Name eintippen zum Filtern",
+        "🔍 Mitglied suchen", _mp_labels, index=_sel_idx,
+        key="mp_sel", help="Name eintippen zum Filtern",
     )
     pn = _mp_pns[_mp_labels.index(_sel_label)]
+
+    # ── Deviation strip chart ─────────────────────────────────────────────
+    st.markdown("---")
+    with st.spinner("Lade Übersicht…"):
+        _dev_mp = get_all_mp_deviations()
+
+    if not _dev_mp.empty:
+        _strip_mp = _dev_mp[_dev_mp["FractionAbbr"].isin(FRAC_ORDER)].copy()
+        _strip_mp["Fraktion"] = _strip_mp["FractionAbbr"].apply(frac_label)
+        _fig_mp_strip = px.strip(
+            _strip_mp, x="Abweichung (%)", y="Fraktion",
+            color="FractionAbbr", color_discrete_map=frac_color_map(),
+            hover_name="Name",
+            hover_data={"FractionAbbr": False, "Fraktion": True,
+                        "CouncilAbbr": True, "CantonAbbr": True,
+                        "Total": True, "Deviated": True, "Abweichung (%)": True},
+            category_orders={"Fraktion": list(reversed(frac_order_labels()))},
+            stripmode="overlay",
+            labels={"CouncilAbbr": "Rat", "CantonAbbr": "Kanton",
+                    "Total": "Abstimmungen", "Deviated": "Abweichungen"},
+        )
+        _fig_mp_strip.update_traces(
+            marker=dict(size=8, opacity=0.7, line=dict(width=0.5, color="white")),
+            jitter=0.6,
+        )
+        _fig_mp_strip.update_layout(
+            showlegend=False,
+            xaxis=dict(title="Abweichung vom Fraktionskurs (%)",
+                       range=[-1, _strip_mp["Abweichung (%)"].max() + 2]),
+            yaxis_title="", height=360, margin=dict(l=10, r=10, t=20, b=10),
+        )
+        st.plotly_chart(_fig_mp_strip, use_container_width=True)
+
+    # ── MP × Fraktion alignment heatmap ──────────────────────────────────
+    with st.spinner("Berechne Übereinstimmungsmatrix…"):
+        _aln = get_mp_fraction_alignment()
+
+    if not _aln.empty:
+        _aln_plot = _aln[_aln["FractionAbbr"].isin(FRAC_ORDER)].copy()
+        _aln_sorted = pd.concat([
+            _aln_plot[_aln_plot["FractionAbbr"] == f].sort_values(f, ascending=False)
+            for f in FRAC_ORDER if f in _aln_plot["FractionAbbr"].values
+        ])
+        _frac_cols_present = [f for f in FRAC_ORDER if f in _aln_sorted.columns]
+        _z = _aln_sorted[_frac_cols_present].values
+        _ylabels = _aln_sorted["Name"].tolist()
+        _xlabels = [frac_label(f) for f in _frac_cols_present]
+        _fig_aln = go.Figure(go.Heatmap(
+            z=_z, x=_xlabels, y=_ylabels,
+            colorscale="RdYlGn", zmin=30, zmax=100,
+            hovertemplate="<b>%{y}</b><br>%{x}: %{z:.0f}%<extra></extra>",
+            showscale=True,
+            colorbar=dict(title="Übereinstimmung (%)", len=0.6, thickness=12),
+            xgap=1, ygap=0.3,
+        ))
+        _fig_aln.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            xaxis=dict(side="top", tickfont=dict(size=12)),
+            yaxis=dict(autorange="reversed", tickfont=dict(size=9), dtick=1),
+            margin=dict(l=120, r=60, t=40, b=10),
+            height=620,
+        )
+        st.plotly_chart(_fig_aln, use_container_width=True)
+        st.caption(
+            "Jede Zeile = ein Parlamentsmitglied, sortiert nach Fraktion und Übereinstimmung. "
+            "Grün = häufig mit dieser Fraktion gestimmt. Hover für genaue Werte."
+        )
 
     if pn is None:
         st.stop()
@@ -1013,43 +1103,78 @@ elif page == "Fraktion":
     if members.empty:
         no_data_stop()
 
-    fractions  = sorted(members["FractionAbbr"].dropna().unique())
-    frac_labels_list = [frac_label(a) for a in fractions]
-    frac_sel   = st.selectbox("Fraktion", frac_labels_list, key="frac_sel")
-    frac       = fractions[frac_labels_list.index(frac_sel)]
-    frac_name  = members.loc[members["FractionAbbr"] == frac, "FractionName"].iloc[0]
+    st.title("Fraktionen")
 
+    # ── Landing: Kohäsion aller Fraktionen ───────────────────────────────
+    with st.spinner("Berechne Kohäsion…"):
+        all_votes = get_all_votes()
+        coh_all   = fraction_cohesion(all_votes, members)
+
+    if not coh_all.empty:
+        _coh_plot = coh_all[coh_all["Fraktion"].isin(FRAC_ORDER)].copy()
+        _coh_plot["FraktionLabel"] = _coh_plot["Fraktion"].apply(frac_label)
+        _fig_coh = px.bar(
+            _coh_plot,
+            x="FraktionLabel", y="Kohäsion (%)",
+            color="FraktionLabel",
+            color_discrete_map={frac_label(a): FRAC_COLORS[a] for a in FRAC_ORDER},
+            text="Kohäsion (%)",
+            hover_data={"FraktionLabel": False, "Mitglieder": True, "Kohäsion (%)": True},
+            category_orders={"FraktionLabel": frac_order_labels()},
+        )
+        _fig_coh.update_traces(
+            texttemplate="%{text:.1f}%",
+            textposition="outside",
+            textfont=dict(size=13),
+        )
+        _fig_coh.update_layout(
+            showlegend=False,
+            xaxis_title="",
+            yaxis=dict(title="Kohäsion (%)", range=[0, 105]),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            height=360,
+            margin=dict(l=20, r=20, t=20, b=20),
+        )
+        st.plotly_chart(_fig_coh, use_container_width=True)
+        st.caption(
+            "Anteil der Abstimmungen, bei denen alle anwesenden Fraktionsmitglieder gleich stimmten. "
+            "Je höher, desto disziplinierter die Fraktion."
+        )
+
+    st.markdown("---")
+
+    # ── Fraction selector ─────────────────────────────────────────────────
+    _frac_opts_ordered = [f for f in FRAC_ORDER if f in members["FractionAbbr"].values]
+    _frac_other = sorted([f for f in members["FractionAbbr"].dropna().unique()
+                          if f not in FRAC_ORDER])
+    _all_frac_abbrs = _frac_opts_ordered + _frac_other
+    _frac_sel_labels = ["— Fraktion auswählen —"] + [frac_label(a) for a in _all_frac_abbrs]
+
+    _frac_sel = st.selectbox("🔍 Fraktion auswählen", _frac_sel_labels, key="frac_sel")
+    if _frac_sel == "— Fraktion auswählen —":
+        st.stop()
+
+    frac      = _all_frac_abbrs[_frac_sel_labels.index(_frac_sel) - 1]
+    frac_name = members.loc[members["FractionAbbr"] == frac, "FractionName"].iloc[0]
+
+    st.markdown("---")
     st.title(frac_label(frac))
     st.caption(frac_name)
 
     with st.spinner("Lade Daten…"):
-        all_votes  = get_all_votes()
         frac_votes = get_fraction_votes(frac)
 
     if frac_votes.empty:
         st.warning("Keine Daten für diese Fraktion.")
         st.stop()
 
-    # ── Kohäsion ──────────────────────────────────────────────────────────
+    # ── Kohäsion dieser Fraktion ──────────────────────────────────────────
     st.subheader("Fraktionskohäsion")
-    with st.spinner("Berechne Kohäsion…"):
-        coh = fraction_cohesion(all_votes, members)
-
-    if not coh.empty:
-        this_coh = coh.loc[coh["Fraktion"] == frac, "Kohäsion (%)"]
-        c1, c2   = st.columns([1, 3])
+    if not coh_all.empty:
+        this_coh = coh_all.loc[coh_all["Fraktion"] == frac, "Kohäsion (%)"]
         if not this_coh.empty:
-            c1.metric(f"Kohäsion {frac_label(frac)}", f"{this_coh.iloc[0]}%")
-        coh_plot = coh.copy()
-        coh_plot["Fraktion"] = coh_plot["Fraktion"].apply(frac_label)
-        fig = px.bar(
-            coh_plot, x="Fraktion", y="Kohäsion (%)",
-            color="Fraktion", color_discrete_map=frac_color_map(),
-            title="Kohäsion aller Fraktionen", hover_data=["Mitglieder"],
-            category_orders={"Fraktion": frac_order_labels()},
-        )
-        fig.update_layout(showlegend=False)
-        c2.plotly_chart(fig, use_container_width=True)
+            st.metric(f"Kohäsion {frac_label(frac)}", f"{this_coh.iloc[0]}%")
 
     # ── Abweichler ────────────────────────────────────────────────────────
     st.markdown("---")
