@@ -439,7 +439,7 @@ if page == "Übersicht":
             legend_title="",
             legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center"),
             xaxis=dict(showticklabels=False, showgrid=True, zeroline=False,
-                       title="← Links  ·  Richtung der Abweichung  ·  Rechts →"),
+                       title="← Links  ·  Politische Achse  ·  Rechts →"),
             yaxis=dict(showgrid=True, zeroline=False,
                        title="Abweichung vom Fraktionskurs (%)"),
             height=480,
