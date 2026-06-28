@@ -450,7 +450,8 @@ if page == "Übersicht":
             "Jeder Punkt ist ein Parlamentsmitglied. X-Achse: politische Position anhand des "
             "tatsächlichen Abstimmungsverhaltens — ein SVP-Mitglied, das häufig gegen links abweicht, "
             "wird links von anderen SVP-Mitgliedern dargestellt. Y-Achse: Abweichungsrate vom "
-            "Fraktionskurs. Hover für Name und Details."
+            "Fraktionskurs — ein Mitglied, das häufiger von der eigenen Fraktion abweicht, "
+            "erscheint weiter oben. Hover für Name und Details."
         )
 
     st.markdown("---")
