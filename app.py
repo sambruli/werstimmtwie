@@ -408,7 +408,7 @@ elif page == "Geschäft":
 
     keyword = st.text_input(
         "Suche nach Geschäftsnummer oder Stichwort",
-        placeholder="z.B. 23.456  oder  Klimaschutzgesetz",
+        placeholder="z.B. 23.456  oder  CO2-Gesetz",
         key="geschaeft_search",
     )
 
