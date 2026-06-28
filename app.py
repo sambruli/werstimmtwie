@@ -225,7 +225,7 @@ Bei knapper Mehrheit (z.B. 52%) ist eine abweichende Stimme weniger auffällig a
 st.sidebar.title("🏛️ CH Parlament")
 check_api_key()
 
-_pages = ["Übersicht", "Thema", "Geschäft", "Mitglied", "Fraktion", "Daten"]
+_pages = ["Übersicht", "Thema", "Geschäft", "Mitglied", "Fraktion"]
 _nav = st.session_state.pop("_nav_page", None)
 if _nav and _nav in _pages:
     st.session_state["nav_radio"] = _nav
@@ -861,82 +861,3 @@ elif page == "Fraktion":
             st.dataframe(disag_disp, column_config=cfg,
                          use_container_width=True, height=300)
 
-# ════════════════════════════════════════════════════════════════════════════
-# 6. DATEN
-# ════════════════════════════════════════════════════════════════════════════
-
-elif page == "Daten":
-    st.title("Datenverwaltung")
-
-    if not _has_db():
-        st.info(
-            "Diese Instanz läuft ohne lokale Datenbank. "
-            "Scraping ist nur auf deiner lokalen Maschine möglich. "
-            "Exportiere dort die Daten mit `python export.py` und pushe die Parquet-Dateien."
-        )
-    else:
-        st.error(
-            "⚠️ **Nur anfassen, wenn du weisst was du tust.** "
-            "Ein vollständiger Scrape kann 30–60 Minuten dauern und API-Limits treffen. "
-            "Bestehende Daten werden beim Scrapen nicht gelöscht — nur neue Einträge hinzugefügt."
-        )
-
-        init_db()
-        stats = db_stats()
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Mitglieder", stats["members"])
-        c2.metric("Sessions", stats["sessions"])
-        c3.metric("Gescrapt", stats["scraped"])
-        c4.metric("Abstimmungseinträge", f"{stats['votes']:,}")
-
-        if stats["members"] > 0:
-            members = get_members()
-            st.caption(
-                f"NR: {(members['CouncilAbbr']=='NR').sum()} | "
-                f"SR: {(members['CouncilAbbr']=='SR').sum()}"
-            )
-
-        st.markdown("---")
-        log_box = st.empty()
-        _lines: list = []
-
-        def _log(msg):
-            _lines.append(msg)
-            log_box.text_area("Log", "\n".join(_lines[-60:]), height=300)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🔄 Vollständiger Scrape", type="primary"):
-                with st.spinner("Läuft…"):
-                    n_m, n_s, n_v = full_scrape(_log)
-                clear_cache()
-                st.success(f"{n_m} Mitglieder · {n_s} Sessions · {n_v:,} Einträge")
-        with col2:
-            if st.button("⬆️ Update (neue Sessions)"):
-                with st.spinner("Läuft…"):
-                    n_v = update_scrape(_log)
-                clear_cache()
-                st.success(f"{n_v:,} neue Einträge")
-
-        col3, col4 = st.columns(2)
-        with col3:
-            if st.button("🔧 Decision-Codes reparieren"):
-                _migrate_decisions()
-                clear_cache()
-                st.success("Fertig")
-        with col4:
-            if st.button("🗑️ Cache leeren"):
-                clear_cache()
-                st.success("Cache geleert")
-
-        st.markdown("---")
-        st.subheader("Ja/Nein-Bedeutung nachfüllen")
-        st.caption(
-            "Füllt MeaningYes/MeaningNo für alle Sessions nach, die noch keine "
-            "Bedeutungsdaten haben. Kann je nach Datenmenge 15–45 Minuten dauern."
-        )
-        if st.button("📝 Backfill Ja/Nein-Bedeutung"):
-            with st.spinner("Läuft — bitte warten…"):
-                n = backfill_meaning(_log)
-            clear_cache()
-            st.success(f"{n:,} Einträge aktualisiert")
