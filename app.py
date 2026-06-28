@@ -141,10 +141,35 @@ def get_all_mp_deviations():
     agg["Name"] = agg["FirstName"] + " " + agg["LastName"]
     return agg
 
+@st.cache_data(ttl=3600, show_spinner="Berechne Themen-Kohäsionsmatrix…")
+def get_topic_fraction_cohesion():
+    """Returns a (n_topics × n_fracs) DataFrame of cohesion % for the heatmap."""
+    av = get_all_votes()
+    m  = get_members()
+    active_dec = ["Ja", "Nein", "Enthaltung"]
+    rows = []
+    for topic_name in TOPICS.keys():
+        gks = get_topic_groupkeys(av, topic_name)
+        t_votes = av[av["GroupKey"].isin(gks)]
+        for frac in FRAC_ORDER:
+            frac_pns = set(m.loc[m["FractionAbbr"] == frac, "PersonNumber"])
+            fv = t_votes[
+                t_votes["PersonNumber"].isin(frac_pns) &
+                t_votes["DecisionNorm"].isin(active_dec)
+            ]
+            if fv.empty:
+                coh = float("nan")
+            else:
+                coh = round(float(
+                    fv.groupby("GroupKey")["DecisionNorm"].nunique().eq(1).mean() * 100
+                ), 1)
+            rows.append({"Thema": topic_name, "Fraktion": frac_label(frac), "Kohäsion (%)": coh})
+    return pd.DataFrame(rows)
+
 def clear_cache():
     for fn in (get_members, get_all_votes, get_mp_votes,
                get_fraction_votes, get_sessions, get_positions,
-               get_all_mp_deviations):
+               get_all_mp_deviations, get_topic_fraction_cohesion):
         fn.clear()
 
 def _has_db() -> bool:
@@ -313,13 +338,58 @@ if page == "Übersicht":
 # ════════════════════════════════════════════════════════════════════════════
 
 elif page == "Thema":
-    st.title("Themenanalyse")
+    st.title("Suche nach Thema")
+    st.markdown(
+        "Wähle ein politisches Thema und sieh, wie geschlossen die Fraktionen abstimmten "
+        "und welche Parlamentsmitglieder am häufigsten von der eigenen Fraktionslinie abwichen. "
+        "Die Themen werden anhand von Stichwörtern in Titel und Geschäftsnummern klassifiziert."
+    )
+
     members   = get_members()
     all_votes = get_all_votes()
     if members.empty or all_votes.empty:
         no_data_stop()
 
-    topic = st.selectbox("Thema", list(TOPICS.keys()), key="thema_sel")
+    # ── Option 3: Thema × Fraktion cohesion heatmap (welcome visual) ──────
+    with st.spinner("Lade Übersicht…"):
+        _coh_matrix = get_topic_fraction_cohesion()
+
+    if not _coh_matrix.empty:
+        _pivot = _coh_matrix.pivot(index="Thema", columns="Fraktion", values="Kohäsion (%)")
+        _col_order = [frac_label(f) for f in FRAC_ORDER if frac_label(f) in _pivot.columns]
+        _pivot = _pivot[_col_order]
+
+        _fig_hm = px.imshow(
+            _pivot,
+            color_continuous_scale="RdYlGn",
+            zmin=50, zmax=100,
+            text_auto=True,
+            aspect="auto",
+            labels=dict(color="Kohäsion (%)"),
+        )
+        _fig_hm.update_layout(
+            xaxis_title="",
+            yaxis_title="",
+            coloraxis_colorbar=dict(title="Kohäsion (%)"),
+            margin=dict(l=10, r=10, t=10, b=10),
+            height=420,
+        )
+        st.plotly_chart(_fig_hm, use_container_width=True)
+        st.caption(
+            "Fraktionskohäsion pro Thema: Grün = Fraktion stimmt geschlossen ab, "
+            "Rot = viele Abweichler. Klicke auf ein Feld zum Zoomen."
+        )
+
+    st.markdown("---")
+
+    # ── Topic selector ────────────────────────────────────────────────────
+    _topic_opts = ["— Thema auswählen —"] + list(TOPICS.keys())
+    _topic_sel  = st.selectbox("🔍 Thema wählen", _topic_opts, key="thema_sel")
+
+    if _topic_sel == "— Thema auswählen —":
+        st.stop()
+
+    topic = _topic_sel
 
     with st.spinner("Filtere Abstimmungen nach Thema…"):
         topic_gks = get_topic_groupkeys(all_votes, topic)
