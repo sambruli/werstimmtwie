@@ -7,6 +7,7 @@ import os
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 
 from db import init_db, db_stats, DB_PATH, get_conn
 from scraper import full_scrape, update_scrape, scrape_sr_votes_direct, backfill_meaning
@@ -166,10 +167,42 @@ def get_topic_fraction_cohesion():
             rows.append({"Thema": topic_name, "Fraktion": frac_label(frac), "Kohäsion (%)": coh})
     return pd.DataFrame(rows)
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_sunburst_data():
+    """Build ids/labels/parents/values/colors arrays for the Übersicht sunburst."""
+    dev = get_all_mp_deviations()
+    if dev.empty:
+        return [], [], [], [], []
+    ids, labels, parents, values, colors = [], [], [], [], []
+    for frac in FRAC_ORDER:
+        fdata = dev[dev["FractionAbbr"] == frac]
+        if fdata.empty:
+            continue
+        fclr  = FRAC_COLORS.get(frac, "#888888")
+        flbl  = frac_label(frac)
+        ids.append(frac);       labels.append(flbl)
+        parents.append("");     values.append(int(fdata["Total"].sum()))
+        colors.append(fclr)
+        for _, mp in fdata.iterrows():
+            mp_id = f"{frac}_{int(mp['PersonNumber'])}"
+            inl   = max(0, int(mp["Total"]) - int(mp["Deviated"]))
+            dv    = int(mp["Deviated"])
+            ids.append(mp_id);        labels.append(mp["Name"])
+            parents.append(frac);     values.append(int(mp["Total"]))
+            colors.append(fclr)
+            ids.append(mp_id+"_i");   labels.append("Fraktionslinie")
+            parents.append(mp_id);    values.append(inl)
+            colors.append(fclr)
+            ids.append(mp_id+"_d");   labels.append("Abweichend")
+            parents.append(mp_id);    values.append(dv)
+            colors.append("#cccccc")
+    return ids, labels, parents, values, colors
+
 def clear_cache():
     for fn in (get_members, get_all_votes, get_mp_votes,
                get_fraction_votes, get_sessions, get_positions,
-               get_all_mp_deviations, get_topic_fraction_cohesion):
+               get_all_mp_deviations, get_topic_fraction_cohesion,
+               get_sunburst_data):
         fn.clear()
 
 def _has_db() -> bool:
@@ -307,6 +340,32 @@ if page == "Übersicht":
         "Im Zentrum steht die Frage: Wer weicht wie oft von der Fraktionslinie ab — "
         "bei welchen Themen, in welche Richtung, und im Vergleich zu anderen Fraktionen?"
     )
+
+    # ── Sunburst ──────────────────────────────────────────────────────────
+    with st.spinner("Lade Übersicht…"):
+        _sb_ids, _sb_labels, _sb_parents, _sb_values, _sb_colors = get_sunburst_data()
+
+    if _sb_ids:
+        _fig_sb = go.Figure(go.Sunburst(
+            ids=_sb_ids, labels=_sb_labels, parents=_sb_parents,
+            values=_sb_values,
+            marker=dict(colors=_sb_colors),
+            branchvalues="total",
+            insidetextorientation="radial",
+            hovertemplate="<b>%{label}</b><br>%{value} Stimmen<extra></extra>",
+            textfont=dict(size=11),
+        ))
+        _fig_sb.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            margin=dict(l=0, r=0, t=0, b=0),
+            height=520,
+        )
+        st.plotly_chart(_fig_sb, use_container_width=True)
+        st.caption(
+            "Innerer Ring: Fraktionen. Mittlerer Ring: Parlamentsmitglieder. "
+            "Äusserer Ring: Abstimmungen im Einklang mit der Fraktion (Farbe) vs. abweichend (grau). "
+            "Klicken zum Hineinzoomen."
+        )
 
     st.markdown("---")
     st.subheader("So verwendest du die App")
