@@ -111,6 +111,25 @@ def summarize_topic(topic: str, breakdown_rows: list[dict]) -> str:
     return _ask("\n".join(lines))
 
 
+def summarize_geschaeft(biz_short: str, subject: str,
+                        meaning_yes: str, meaning_no: str,
+                        fraction_votes: list[dict]) -> str:
+    lines = [
+        f"Geschäft: {biz_short}",
+        f"Abstimmungsfrage: {subject}" if subject else "",
+        f"Ja bedeutet: {meaning_yes}" if meaning_yes else "",
+        f"Nein bedeutet: {meaning_no}" if meaning_no else "",
+        "", "Abstimmungsverhalten nach Fraktion:",
+    ]
+    for r in fraction_votes:
+        lines.append(f"  {r.get('FractionAbbr','')} — {r.get('DecisionNorm','')}: {r.get('Anzahl','')} Mitglieder")
+    lines.append(
+        "\nFasse in 4–6 Sätzen zusammen, wie die Fraktionen zu diesem Geschäft abgestimmt haben. "
+        "Welche Lager bildeten sich? Gibt es Überraschungen? Antworte auf Deutsch, sachlich und präzise."
+    )
+    return _ask("\n".join(l for l in lines if l is not None))
+
+
 def summarize_fraction_deviators(fraction: str, rows: list[dict]) -> str:
     lines = [
         f"Fraktion: {fraction} — Abweichungsraten der Mitglieder:", "",

@@ -74,7 +74,7 @@ def frac_color_map(*extra_dicts) -> dict:
 # ── Page config ───────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="CH Parlament Abstimmungsanalyse",
+    page_title="Wer stimmt wie?",
     page_icon="🏛️",
     layout="wide",
 )
@@ -207,14 +207,18 @@ def vote_table(df, extra_cols=None, height=400):
 _METHODOLOGY = """
 **Was zählt als Abweichung?**
 Eine Abstimmung gilt als Abweichung, wenn das Mitglied anders votierte als die
-*Mehrheit der anwesenden* Fraktionsmitglieder auf demselben Rollcall.
+*Mehrheit der anwesenden* Fraktionsmitglieder auf derselben Abstimmung.
 
 **Was wird ausgeschlossen?**
 Abwesend, Entschuldigt und Nicht-teilgenommen werden *nicht* als Abweichung gewertet —
 sie sind kein aktives Votum gegen die Fraktion. Nur Ja, Nein und Enthaltung fliessen
 in die Abweichungsberechnung ein.
 
-**Fraktionsmehrheit:** "Ja (87%)" zeigt, wie klar die Mehrheit innerhalb der Fraktion war.
+**Mehrere Abstimmungen pro Geschäft:** Ein Geschäft (z.B. «23.456») kann mehrere
+Abstimmungen umfassen — etwa Eintreten, Rückweisung, Detailberatungsartikel und
+Gesamtabstimmung. Jede dieser Abstimmungen wird separat gezählt und ausgewertet.
+
+**Fraktionsmehrheit:** «Ja (87%)» zeigt, wie klar die Mehrheit innerhalb der Fraktion war.
 Bei knapper Mehrheit (z.B. 52%) ist eine abweichende Stimme weniger auffällig als bei 95%.
 
 **Datenquelle:** Swiss Parliament OData API (parlament.ch), Legislatur 52 (ab Dez. 2023).
@@ -222,7 +226,7 @@ Bei knapper Mehrheit (z.B. 52%) ist eine abweichende Stimme weniger auffällig a
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
-st.sidebar.title("🏛️ CH Parlament")
+st.sidebar.title("🏛️ Wer stimmt wie?")
 check_api_key()
 
 _pages = ["Übersicht", "Thema", "Geschäft", "Mitglied", "Fraktion"]
@@ -236,34 +240,74 @@ page = st.sidebar.radio("Navigation", _pages, key="nav_radio", label_visibility=
 # ════════════════════════════════════════════════════════════════════════════
 
 if page == "Übersicht":
-    st.title("Schweizer Parlament — Abstimmungsanalyse")
+    st.title("Wer stimmt wie?")
+    st.markdown("##### Abstimmungsanalyse Schweizer Parlamentarier:innen")
+
     st.markdown(
-        "Analysiert das Abstimmungsverhalten aller Parlamentsmitglieder "
-        "(NR & SR, Legislatur 52). Schwerpunkt: Abweichung von der Fraktionslinie — "
-        "wer weicht wie oft ab, in welche Richtung, und bei welchen Themen."
+        "Diese App analysiert das Abstimmungsverhalten aller Mitglieder des Schweizer Parlaments "
+        "(National- und Ständerat, Legislatur 52 ab Dezember 2023). "
+        "Im Zentrum steht die Frage: Wer weicht wie oft von der Fraktionslinie ab — "
+        "bei welchen Themen, in welche Richtung, und im Vergleich zu anderen Fraktionen?"
     )
 
+    st.markdown("---")
+    st.subheader("So verwendest du die App")
+    st.markdown(
+        "**Thema** — Wähle ein politisches Thema (z.B. Klima, Migration) und sieh, "
+        "wie kohäsiv die Fraktionen abstimmten und wer am stärksten von der eigenen Linie abwich.\n\n"
+        "**Geschäft** — Suche nach einer Geschäftsnummer (z.B. `23.456`) oder einem Stichwort "
+        "und sieh, wie jede Fraktion bei jeder einzelnen Abstimmung votierte.\n\n"
+        "**Mitglied** — Wähle ein Parlamentsmitglied und erhalte ein detailliertes Profil: "
+        "Gesamtabweichung, Abweichung nach Thema, und eine Liste aller abweichenden Abstimmungen.\n\n"
+        "**Fraktion** — Vergleiche Kohäsion und Abweichungsraten innerhalb einer Fraktion, "
+        "inklusive Heatmap über alle Abstimmungen."
+    )
+
+    st.warning(
+        "**🤖 KI-Zusammenfassungen** — Jede Seite bietet eine KI-Zusammenfassung via Claude. "
+        "Bitte diese Funktion sparsam benutzen: die Kosten werden von Sam's persönlichem API-Budget gedeckt."
+    )
+
+    st.markdown("---")
+    st.subheader("Methodik")
     st.info(_METHODOLOGY)
 
-    # Future visual placeholder
+    # ── Fraktions-Alignment-Heatmap ───────────────────────────────────────
     st.markdown("---")
-    st.caption("📊 *Hier folgt eine visuelle Übersicht des Abweichungsverhaltens aller Mitglieder.*")
+    st.subheader("Wie oft stimmen die Fraktionen gemeinsam ab?")
+    st.caption(
+        "Prozentualer Anteil der Abstimmungen, bei denen zwei Fraktionen dieselbe Mehrheitsposition einnahmen."
+    )
 
-    st.markdown("---")
-    init_db()
-    stats = db_stats()
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Mitglieder", stats["members"])
-    c2.metric("Sessions", stats["sessions"])
-    c3.metric("Gescrapt", stats["scraped"])
-    c4.metric("Abstimmungseinträge", f"{stats['votes']:,}")
+    with st.spinner("Berechne Fraktionsübereinstimmung…"):
+        _pos = get_positions()
 
-    if stats["members"] > 0:
-        members = get_members()
-        st.caption(
-            f"NR: {(members['CouncilAbbr']=='NR').sum()} | "
-            f"SR: {(members['CouncilAbbr']=='SR').sum()}"
+    _fracs_in_pos = [f for f in FRAC_ORDER if f in _pos.columns]
+    if len(_fracs_in_pos) >= 2:
+        import numpy as np
+        _align = pd.DataFrame(index=_fracs_in_pos, columns=_fracs_in_pos, dtype=float)
+        for _f1 in _fracs_in_pos:
+            for _f2 in _fracs_in_pos:
+                _both = _pos[[_f1, _f2]].dropna()
+                _align.loc[_f1, _f2] = round((_both[_f1] == _both[_f2]).mean() * 100, 1) if len(_both) else float("nan")
+        _align.index   = [frac_label(f) for f in _fracs_in_pos]
+        _align.columns = [frac_label(f) for f in _fracs_in_pos]
+        _fig_align = px.imshow(
+            _align,
+            color_continuous_scale="RdYlGn",
+            zmin=40, zmax=100,
+            text_auto=True,
+            aspect="auto",
+            labels=dict(color="Übereinstimmung (%)"),
+            title="Fraktionsübereinstimmung — Abstimmungen Legislatur 52",
         )
+        _fig_align.update_layout(
+            coloraxis_colorbar=dict(title=""),
+            xaxis_title="", yaxis_title="",
+        )
+        st.plotly_chart(_fig_align, use_container_width=True)
+    else:
+        st.caption("Nicht genügend Daten für die Heatmap.")
 
 # ════════════════════════════════════════════════════════════════════════════
 # 2. THEMA
@@ -285,7 +329,7 @@ elif page == "Thema":
         st.warning("Keine Abstimmungen für dieses Thema gefunden.")
         st.stop()
 
-    st.caption(f"{len(topic_gks)} Rollcall-Abstimmungen zu diesem Thema gefunden.")
+    st.caption(f"{len(topic_gks)} Abstimmungen zu diesem Thema gefunden.")
 
     # ── Fraktionskohäsion ─────────────────────────────────────────────────
     st.subheader("Fraktionskohäsion auf diesem Thema")
@@ -319,7 +363,7 @@ elif page == "Thema":
         dev_all = topic_deviators_all(all_votes, members, positions, topic_gks)
 
     if dev_all.empty:
-        st.info("Zu wenig Daten (mind. 3 Rollcalls pro Mitglied erforderlich).")
+        st.info("Zu wenig Daten (mind. 3 Abstimmungen pro Mitglied erforderlich).")
     else:
         frac_filter_opts = ["Alle"] + sorted(dev_all["FractionAbbr"].unique())
         frac_filter = st.selectbox("Fraktion filtern", frac_filter_opts, key="thema_frac_filter")
@@ -347,6 +391,10 @@ elif page == "Thema":
         _sel = st.selectbox("", _tn, key="thema_nav_sel", label_visibility="collapsed")
         if st.button("→ Zur Mitglied-Seite", key="thema_nav_btn"):
             navigate_to_mp(_tp[_tn.index(_sel)])
+
+    st.markdown("---")
+    _thema_breakdown = dev_all[["FractionAbbr", "Abweichung (%)", "Abweichend", "Total"]].to_dict(orient="records") if not dev_all.empty else []
+    ai_button("sum_thema", summarizer.summarize_topic, topic, _thema_breakdown)
 
 # ════════════════════════════════════════════════════════════════════════════
 # 3. GESCHÄFT
@@ -415,7 +463,7 @@ elif page == "Geschäft":
         f"{row['MeetingDate'][:10]}  [{row.get('CouncilAbbr','?')}]  {str(row['Subject'] or '')[:80]}"
         for _, row in rollcalls.iterrows()
     ]
-    rc_sel = st.selectbox("Abstimmung (Rollcall)", rc_labels, key="geschaeft_rc_sel")
+    rc_sel = st.selectbox("Abstimmung auswählen", rc_labels, key="geschaeft_rc_sel")
     sel_gk = rollcalls.iloc[rc_labels.index(rc_sel)]["GroupKey"]
 
     vote_detail = gv[gv["GroupKey"] == sel_gk].copy()
@@ -495,6 +543,22 @@ elif page == "Geschäft":
                           label_visibility="collapsed")
     if st.button("→ Zur Mitglied-Seite", key="geschaeft_mp_btn"):
         navigate_to_mp(mp_pns[mp_names.index(_gsel)])
+
+    st.markdown("---")
+    _geschaeft_frac_votes = (
+        active_vote.groupby(["FractionAbbr", "DecisionNorm"])
+        .size().reset_index(name="Anzahl").to_dict(orient="records")
+        if not active_vote.empty else []
+    )
+    ai_button(
+        "sum_geschaeft",
+        summarizer.summarize_geschaeft,
+        biz_short,
+        str(subj),
+        str(my),
+        str(mn),
+        _geschaeft_frac_votes,
+    )
 
 # ════════════════════════════════════════════════════════════════════════════
 # 4. MITGLIED
@@ -641,7 +705,7 @@ elif page == "Mitglied":
                 )
                 st.plotly_chart(fig3, use_container_width=True)
             else:
-                st.info("Zu wenig gemeinsame Rollcalls für Richtungsanalyse.")
+                st.info("Zu wenig gemeinsame Abstimmungen für Richtungsanalyse.")
 
             # Deviated votes table
             st.subheader("Abweichende Abstimmungen")
