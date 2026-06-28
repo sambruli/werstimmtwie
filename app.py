@@ -225,7 +225,7 @@ Bei knapper Mehrheit (z.B. 52%) ist eine abweichende Stimme weniger auffällig a
 st.sidebar.title("🏛️ CH Parlament")
 check_api_key()
 
-_pages = ["Übersicht", "Thema", "Geschäft", "Mitglied", "Fraktion", "Abfrage", "Daten"]
+_pages = ["Übersicht", "Thema", "Geschäft", "Mitglied", "Fraktion", "Daten"]
 _nav = st.session_state.pop("_nav_page", None)
 if _nav and _nav in _pages:
     st.session_state["nav_radio"] = _nav
@@ -862,94 +862,7 @@ elif page == "Fraktion":
                          use_container_width=True, height=300)
 
 # ════════════════════════════════════════════════════════════════════════════
-# 6. ABFRAGE
-# ════════════════════════════════════════════════════════════════════════════
-
-elif page == "Abfrage":
-    st.title("Datenabfrage")
-    st.caption(
-        "Stelle Fragen zur Datenbank in natürlicher Sprache. "
-        "Die SQL-Abfrage läuft lokal — nur Frage und Ergebnis gehen an Claude."
-    )
-
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-
-    # Example buttons (only when chat is empty)
-    if not st.session_state.chat_history:
-        st.markdown("**Beispielfragen:**")
-        examples = [
-            "Welche Mitglieder haben am häufigsten 'Nein' gestimmt?",
-            "Welche Abstimmungen hatten den höchsten Anteil an Enthaltungen?",
-            "Wie viele Abstimmungen hat Simon Michel verpasst?",
-            "Welche Fraktion hat den höchsten Anteil an Nein-Stimmen?",
-        ]
-        cols = st.columns(2)
-        for i, ex in enumerate(examples):
-            if cols[i % 2].button(ex, key=f"ex_{i}"):
-                st.session_state["_chat_prefill"] = ex
-                st.rerun()
-
-    # Display history
-    for msg in st.session_state.chat_history:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-            if msg.get("df") is not None:
-                st.dataframe(msg["df"], use_container_width=True, height=220)
-
-    prefill  = st.session_state.pop("_chat_prefill", None)
-    question = st.chat_input("Frage stellen…")
-    if prefill and not question:
-        question = prefill
-
-    if question:
-        # Show user message
-        with st.chat_message("user"):
-            st.markdown(question)
-        st.session_state.chat_history.append({"role": "user", "content": question})
-
-        # Compute answer OUTSIDE chat_message to avoid Streamlit rendering issues
-        with st.spinner("Claude analysiert…"):
-            try:
-                history = [
-                    {"role": m["role"], "content": m["content"]}
-                    for m in st.session_state.chat_history[:-1]
-                ]
-                answer, df = summarizer.chat_answer(question, history, str(DB_PATH))
-                _err = None
-            except Exception as e:
-                answer, df, _err = None, None, str(e)
-
-        # Display assistant message
-        with st.chat_message("assistant"):
-            if _err:
-                st.error(f"Fehler: {_err}")
-                st.session_state.chat_history.append(
-                    {"role": "assistant", "content": f"Fehler: {_err}"}
-                )
-            else:
-                st.markdown(answer)
-                if df is not None:
-                    st.dataframe(df, use_container_width=True, height=220)
-                st.session_state.chat_history.append(
-                    {"role": "assistant", "content": answer, "df": df}
-                )
-
-        # Download outside chat bubble
-        if df is not None:
-            csv = df.to_csv(index=False).encode("utf-8-sig")
-            st.download_button(
-                "⬇️ CSV", csv, "abfrage.csv", "text/csv",
-                key=f"dl_{len(st.session_state.chat_history)}",
-            )
-
-    if st.session_state.chat_history:
-        if st.button("🗑️ Chat leeren", key="chat_clear"):
-            st.session_state.chat_history = []
-            st.rerun()
-
-# ════════════════════════════════════════════════════════════════════════════
-# 7. DATEN
+# 6. DATEN
 # ════════════════════════════════════════════════════════════════════════════
 
 elif page == "Daten":
