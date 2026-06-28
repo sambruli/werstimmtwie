@@ -305,63 +305,8 @@ if page == "Übersicht":
     st.subheader("Methodik")
     st.info(_METHODOLOGY)
 
-    # ── Deviation strip chart ─────────────────────────────────────────────
     st.markdown("---")
-    st.subheader("Abweichung vom Fraktionskurs — alle Parlamentsmitglieder")
-    st.caption(
-        "Jeder Punkt ist ein Parlamentsmitglied. "
-        "Weiter rechts = häufiger gegen die eigene Fraktion gestimmt. "
-        "Hover für Name, Kanton und Details."
-    )
-
-    with st.spinner("Berechne Abweichungsraten aller Mitglieder…"):
-        _dev_all = get_all_mp_deviations()
-
-    if not _dev_all.empty:
-        _strip = _dev_all[_dev_all["FractionAbbr"].isin(FRAC_ORDER)].copy()
-        _strip["Fraktion"] = _strip["FractionAbbr"].apply(frac_label)
-        _frac_label_order = list(reversed(frac_order_labels()))
-
-        _fig_strip = px.strip(
-            _strip,
-            x="Abweichung (%)",
-            y="Fraktion",
-            color="FractionAbbr",
-            color_discrete_map=frac_color_map(),
-            hover_name="Name",
-            hover_data={
-                "FractionAbbr": False,
-                "Fraktion": True,
-                "CouncilAbbr": True,
-                "CantonAbbr": True,
-                "Total": True,
-                "Deviated": True,
-                "Abweichung (%)": True,
-            },
-            category_orders={"Fraktion": _frac_label_order},
-            stripmode="overlay",
-            title="Abweichung vom Fraktionskurs — Legislatur 52",
-            labels={
-                "CouncilAbbr": "Rat",
-                "CantonAbbr": "Kanton",
-                "Total": "Abstimmungen",
-                "Deviated": "Abweichungen",
-            },
-        )
-        _fig_strip.update_traces(
-            marker=dict(size=8, opacity=0.7, line=dict(width=0.5, color="white")),
-            jitter=0.6,
-        )
-        _fig_strip.update_layout(
-            showlegend=False,
-            xaxis=dict(title="Abweichung (%)", range=[-1, _strip["Abweichung (%)"].max() + 2]),
-            yaxis_title="",
-            height=380,
-            margin=dict(l=10, r=10, t=50, b=10),
-        )
-        st.plotly_chart(_fig_strip, use_container_width=True)
-    else:
-        st.caption("Nicht genügend Daten.")
+    st.caption("📊 *Wähle eine Seite in der Navigation, um die Analyse zu starten.*")
 
 # ════════════════════════════════════════════════════════════════════════════
 # 2. THEMA
@@ -623,26 +568,94 @@ elif page == "Mitglied":
     if members.empty:
         no_data_stop()
 
-    # ── Cascading filters ─────────────────────────────────────────────────
+    st.title("Suche nach Mitgliedern des Parlaments")
+
+    # ── Deviation strip chart (welcome visual) ────────────────────────────
+    with st.spinner("Lade Übersicht…"):
+        _dev_mp = get_all_mp_deviations()
+
+    if not _dev_mp.empty:
+        _strip_mp = _dev_mp[_dev_mp["FractionAbbr"].isin(FRAC_ORDER)].copy()
+        _strip_mp["Fraktion"] = _strip_mp["FractionAbbr"].apply(frac_label)
+
+        _fig_mp_strip = px.strip(
+            _strip_mp,
+            x="Abweichung (%)",
+            y="Fraktion",
+            color="FractionAbbr",
+            color_discrete_map=frac_color_map(),
+            hover_name="Name",
+            hover_data={
+                "FractionAbbr": False,
+                "Fraktion": True,
+                "CouncilAbbr": True,
+                "CantonAbbr": True,
+                "Total": True,
+                "Deviated": True,
+                "Abweichung (%)": True,
+            },
+            category_orders={"Fraktion": list(reversed(frac_order_labels()))},
+            stripmode="overlay",
+            labels={
+                "CouncilAbbr": "Rat",
+                "CantonAbbr": "Kanton",
+                "Total": "Abstimmungen",
+                "Deviated": "Abweichungen",
+            },
+        )
+        _fig_mp_strip.update_traces(
+            marker=dict(size=8, opacity=0.7, line=dict(width=0.5, color="white")),
+            jitter=0.6,
+        )
+        _fig_mp_strip.update_layout(
+            showlegend=False,
+            xaxis=dict(
+                title="Abweichung vom Fraktionskurs (%)",
+                range=[-1, _strip_mp["Abweichung (%)"].max() + 2],
+            ),
+            yaxis_title="",
+            height=380,
+            margin=dict(l=10, r=10, t=20, b=10),
+        )
+        st.plotly_chart(_fig_mp_strip, use_container_width=True)
+
+    st.markdown("---")
+
+    # ── Search controls ───────────────────────────────────────────────────
+    # Handle cross-page navigation (e.g. from Geschäft page)
     target_pn = st.session_state.pop("_nav_pn", None)
     if target_pn:
         st.session_state["mp_frac_filter"]   = "Alle"
         st.session_state["mp_canton_filter"] = "Alle"
 
+    # Fraction + Canton filters on one row
     all_fracs = sorted(members["FractionAbbr"].dropna().unique())
-    frac_filter = st.selectbox(
-        "Fraktion", ["Alle"] + [frac_label(a) for a in all_fracs],
-        key="mp_frac_filter",
-    )
+    _fc1, _fc2 = st.columns(2)
+    with _fc1:
+        frac_filter = st.selectbox(
+            "Fraktion", ["Alle"] + [frac_label(a) for a in all_fracs],
+            key="mp_frac_filter",
+        )
+    with _fc2:
+        _filtered_for_canton = members.copy()
+        if frac_filter != "Alle":
+            for a in all_fracs:
+                if frac_label(a) == frac_filter:
+                    _filtered_for_canton = members[members["FractionAbbr"] == a]
+                    break
+        canton_filter = st.selectbox(
+            "Kanton",
+            ["Alle"] + sorted(_filtered_for_canton["CantonAbbr"].dropna().unique()),
+            key="mp_canton_filter",
+        )
+
+    # Apply filters
     filtered = members.copy()
     if frac_filter != "Alle":
         for a in all_fracs:
             if frac_label(a) == frac_filter:
                 filtered = filtered[filtered["FractionAbbr"] == a]
                 break
-
-    canton_opts = ["Alle"] + sorted(filtered["CantonAbbr"].dropna().unique())
-    canton_filter = st.selectbox("Kanton", canton_opts, key="mp_canton_filter")
     if canton_filter != "Alle":
         filtered = filtered[filtered["CantonAbbr"] == canton_filter]
 
@@ -650,11 +663,35 @@ elif page == "Mitglied":
         st.warning("Keine Mitglieder für diese Kombination.")
         st.stop()
 
-    pn = mp_selector("Parlamentsmitglied", "mp_sel", filtered, target_pn=target_pn)
+    # Name search — full width, with placeholder (no default selection)
+    _sorted = filtered.sort_values(["LastName", "FirstName"])
+    _mp_labels = ["— Name eingeben oder auswählen —"] + [
+        member_label(r) for _, r in _sorted.iterrows()
+    ]
+    _mp_pns = [None] + [int(r["PersonNumber"]) for _, r in _sorted.iterrows()]
+
+    _sel_idx = 0
+    if target_pn and int(target_pn) in _mp_pns:
+        _sel_idx = _mp_pns.index(int(target_pn))
+
+    _sel_label = st.selectbox(
+        "🔍 Mitglied suchen",
+        _mp_labels,
+        index=_sel_idx,
+        key="mp_sel",
+        help="Name eintippen zum Filtern",
+    )
+    pn = _mp_pns[_mp_labels.index(_sel_label)]
+
+    if pn is None:
+        st.stop()
+
+    # ── MP profile ────────────────────────────────────────────────────────
     mp_row  = members[members["PersonNumber"] == pn].iloc[0]
     mp_name = f"{mp_row['FirstName']} {mp_row['LastName']}"
     frac    = mp_row["FractionAbbr"]
 
+    st.markdown("---")
     st.title(mp_name)
     st.caption(
         f"{mp_row['CouncilAbbr']} · {frac_label(frac)} · Kanton {mp_row['CantonAbbr']}"
