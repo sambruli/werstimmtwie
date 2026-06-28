@@ -200,7 +200,7 @@ def vote_table(df, extra_cols=None, height=400):
     if "Datum" in display.columns:
         display = display.sort_values("Datum", ascending=False)
     cfg = {"🔗": st.column_config.LinkColumn("Curia Vista", display_text="↗")}
-    st.dataframe(display, column_config=cfg, use_container_width=True, height=height)
+    st.dataframe(display, column_config=cfg, width="stretch", height=height)
 
 # ── Methodology ───────────────────────────────────────────────────────────────
 
@@ -229,7 +229,7 @@ _pages = ["Übersicht", "Thema", "Geschäft", "Mitglied", "Fraktion", "Abfrage",
 _nav = st.session_state.pop("_nav_page", None)
 if _nav and _nav in _pages:
     st.session_state["nav_radio"] = _nav
-page = st.sidebar.radio("", _pages, key="nav_radio")
+page = st.sidebar.radio("Navigation", _pages, key="nav_radio", label_visibility="collapsed")
 
 # ════════════════════════════════════════════════════════════════════════════
 # 1. ÜBERSICHT
@@ -309,7 +309,7 @@ elif page == "Thema":
             color_discrete_map={"Thema": "#2c3e50", "Gesamt": "#bdc3c7"},
             category_orders={"Fraktion": frac_order_labels()},
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # ── Top Abweichler ────────────────────────────────────────────────────
     st.markdown("---")
@@ -339,7 +339,7 @@ elif page == "Thema":
         )
         fig2.update_layout(yaxis={"categoryorder": "total ascending"},
                            showlegend=False)
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width="stretch")
 
         st.markdown("**Mitglied im Detail ansehen:**")
         _tn = show["Name"].tolist()
@@ -378,7 +378,7 @@ elif page == "Geschäft":
 
     results["Curia Vista"] = results["BizShort"].apply(_make_curia_url)
     cfg = {"Curia Vista": st.column_config.LinkColumn("Curia Vista", display_text="↗")}
-    st.dataframe(results, column_config=cfg, use_container_width=True, height=250)
+    st.dataframe(results, column_config=cfg, width="stretch", height=250)
 
     # Select a Geschäft for detail
     biz_options = results["BizShort"].tolist()
@@ -461,7 +461,7 @@ elif page == "Geschäft":
             category_orders={"Fraktion": frac_order_labels()},
         )
         fig.update_layout(legend_title="", xaxis_title="")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # Individual MP vote table
     st.subheader("Einzelstimmen")
@@ -484,7 +484,7 @@ elif page == "Geschäft":
 
     st.dataframe(
         disp.style.apply(_highlight, axis=1),
-        use_container_width=True, height=400,
+        width="stretch", height=400,
     )
 
     # Navigation to MP
@@ -591,7 +591,7 @@ elif page == "Mitglied":
                 title="Abweichungsrate nach Thema",
             )
             fig.update_layout(xaxis_tickangle=-30, coloraxis_showscale=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         # Per-Session timeline
         active_df = dev_df[~dev_df["DecisionNorm"].isin(ABSENT)].copy()
@@ -612,7 +612,7 @@ elif page == "Mitglied":
                 fig2 = px.line(by_sess, x="Session", y="Abweichung (%)",
                                title="Abweichungsrate pro Session", markers=True)
                 fig2.update_layout(xaxis_tickangle=-20)
-                st.plotly_chart(fig2, use_container_width=True)
+                st.plotly_chart(fig2, width="stretch")
 
         # Deviation direction
         st.subheader("In welche Richtung?")
@@ -639,7 +639,7 @@ elif page == "Mitglied":
                            "categoryarray": list(reversed(frac_order_labels()))},
                     showlegend=False,
                 )
-                st.plotly_chart(fig3, use_container_width=True)
+                st.plotly_chart(fig3, width="stretch")
             else:
                 st.info("Zu wenig gemeinsame Rollcalls für Richtungsanalyse.")
 
@@ -765,7 +765,7 @@ elif page == "Fraktion":
             category_orders={"Fraktion": frac_order_labels()},
         )
         fig.update_layout(showlegend=False)
-        c2.plotly_chart(fig, use_container_width=True)
+        c2.plotly_chart(fig, width="stretch")
 
     # ── Abweichler ────────────────────────────────────────────────────────
     st.markdown("---")
@@ -786,10 +786,10 @@ elif page == "Fraktion":
         )
         fig2.update_layout(yaxis={"categoryorder": "total ascending"},
                            coloraxis_showscale=False)
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width="stretch")
 
         st.dataframe(dev_table.drop(columns=["PersonNumber"]),
-                     use_container_width=True, height=300)
+                     width="stretch", height=300)
 
         st.markdown("**Mitglied im Detail ansehen:**")
         _fn = dev_table["Name"].tolist()
@@ -826,7 +826,7 @@ elif page == "Fraktion":
             labels={"color": "%", "x": "Andere Fraktion", "y": "Mitglied"},
         )
         fig3.update_layout(height=max(300, len(heatmap_df) * 28))
-        st.plotly_chart(fig3, use_container_width=True)
+        st.plotly_chart(fig3, width="stretch")
 
     # ── Kammernvergleich ──────────────────────────────────────────────────
     st.markdown("---")
@@ -859,7 +859,7 @@ elif page == "Fraktion":
             disag_disp["Curia Vista"] = disag_disp["Geschäft"].apply(_make_curia_url)
             cfg = {"Curia Vista": st.column_config.LinkColumn("Curia Vista", display_text="↗")}
             st.dataframe(disag_disp, column_config=cfg,
-                         use_container_width=True, height=300)
+                         width="stretch", height=300)
 
 # ════════════════════════════════════════════════════════════════════════════
 # 6. ABFRAGE
@@ -895,7 +895,7 @@ elif page == "Abfrage":
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
             if msg.get("df") is not None:
-                st.dataframe(msg["df"], use_container_width=True, height=220)
+                st.dataframe(msg["df"], width="stretch", height=220)
 
     prefill  = st.session_state.pop("_chat_prefill", None)
     question = st.chat_input("Frage stellen…")
@@ -930,7 +930,7 @@ elif page == "Abfrage":
             else:
                 st.markdown(answer)
                 if df is not None:
-                    st.dataframe(df, use_container_width=True, height=220)
+                    st.dataframe(df, width="stretch", height=220)
                 st.session_state.chat_history.append(
                     {"role": "assistant", "content": answer, "df": df}
                 )
