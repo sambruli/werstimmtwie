@@ -186,7 +186,17 @@ def chat_answer(question: str, history: list[dict],
 
     # Execute
     try:
-        conn = sqlite3.connect(db_path)
+        db = Path(db_path)
+        if db.exists() and db.stat().st_size > 0:
+            conn = sqlite3.connect(db_path)
+        else:
+            # Build in-memory DB from parquet files (Streamlit Cloud / no local DB)
+            conn = sqlite3.connect(":memory:")
+            here = db.parent
+            for table in ("votes", "members", "sessions"):
+                p = here / f"{table}.parquet"
+                if p.exists():
+                    pd.read_parquet(p).to_sql(table, conn, if_exists="replace", index=False)
         df = pd.read_sql(sql, conn)
         conn.close()
     except Exception as e:
