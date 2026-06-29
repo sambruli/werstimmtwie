@@ -4,6 +4,8 @@ Run: streamlit run app.py
 """
 
 import os
+import json
+import hashlib
 from urllib.parse import urlencode
 import streamlit as st
 import pandas as pd
@@ -590,18 +592,38 @@ def ai_button(key, fn, *args):
             except Exception as e:
                 st.error(f"Fehler: {e}")
 
-@st.cache_data(show_spinner=False)
-def _gesamtbild(chart_id: str, data_summary: str) -> list[str]:
-    try:
-        return summarizer.summarize_chart_overview(chart_id, data_summary)
-    except Exception:
-        return []
+_GESAMTBILD_FILE = DB_PATH.parent / "gesamtbild_cache.json"
 
-def _show_gesamtbild(chart_id: str, data_summary: str):
-    with st.spinner("Gesamtbild wird generiert…"):
-        _bullets = _gesamtbild(chart_id, data_summary)
-    if _bullets:
-        st.info("**Gesamtbild**\n\n" + "\n\n".join(f"• {b}" for b in _bullets))
+def _show_gesamtbild_persistent(chart_id: str, data_summary: str):
+    """Display Gesamtbild from file cache; regenerates + saves only when data hash changes."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return
+    data_hash = hashlib.md5(data_summary.encode()).hexdigest()[:12]
+    cache = {}
+    if _GESAMTBILD_FILE.exists():
+        try:
+            cache = json.loads(_GESAMTBILD_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    entry = cache.get(chart_id, {})
+    if entry.get("hash") == data_hash and entry.get("bullets"):
+        bullets = entry["bullets"]
+    else:
+        with st.spinner("Gesamtbild wird generiert…"):
+            try:
+                bullets = summarizer.summarize_chart_overview(chart_id, data_summary)
+            except Exception:
+                return
+            if bullets:
+                cache[chart_id] = {"hash": data_hash, "bullets": bullets}
+                try:
+                    _GESAMTBILD_FILE.write_text(
+                        json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8"
+                    )
+                except Exception:
+                    pass
+    if bullets:
+        st.info("**Gesamtbild**\n\n" + "\n\n".join(f"• {b}" for b in bullets))
 
 def check_api_key():
     key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -809,7 +831,7 @@ if page == "Home":
             + f"\nAbweichungsbereich: {_pca_plot['Abweichung (%)'].min():.1f}% bis "
             f"{_pca_plot['Abweichung (%)'].max():.1f}%"
         )
-        _show_gesamtbild("Politische Landkarte (PCA)", _pca_data_str)
+        _show_gesamtbild_persistent("Politische Landkarte (PCA)", _pca_data_str)
 
     st.markdown("---")
     st.subheader("So verwendest du die App")
@@ -1128,7 +1150,7 @@ elif page == "Geschäft":
                     f"({_pol_show['PctDevRight'].max():.1f}%)"
                 )
             )
-            _show_gesamtbild("Lagerwechsel", _pol_str)
+            _show_gesamtbild_persistent("Lagerwechsel", _pol_str)
 
         # ── Landing: direction × magnitude scatter ────────────────────────
         st.markdown("---")
@@ -1281,7 +1303,12 @@ elif page == "Geschäft":
                 + f"Stärkster Rechtszug: {_dm_show['NetGravity'].max():.2f}\n"
                 + f"Höchste interne Abweichungsrate: {_dm_show['DeviationPct'].max():.1f}%"
             )
-            _show_gesamtbild("Richtung & Stärke der Abweichungen", _dm_str)
+            ai_button(
+                "dm_gesamtbild",
+                summarizer.summarize_chart_filtered,
+                "Richtung & Stärke der Abweichungen",
+                _dm_str,
+            )
         st.stop()
 
     with st.spinner("Suche…"):
@@ -1864,7 +1891,7 @@ elif page == "Fraktion":
                     for _, row in _coh_plot.sort_values("Kohäsion (%)", ascending=False).iterrows()
                 )
             )
-            _show_gesamtbild("Fraktionskohäsion", _coh_str)
+            _show_gesamtbild_persistent("Fraktionskohäsion", _coh_str)
 
         # ── Deviation strip chart ─────────────────────────────────────────
         with st.spinner("Lade Abweichungsübersicht…"):
@@ -1917,7 +1944,7 @@ elif page == "Fraktion":
                 + f"\n\nStärkster Abweichler: {_max_row['Name']} ({_max_row['Fraktion']}): "
                 f"{_max_row['Abweichung (%)']:.1f}%"
             )
-            _show_gesamtbild("Abweichungsraten aller MPs (Strip)", _strip_str)
+            _show_gesamtbild_persistent("Abweichungsraten aller MPs (Strip)", _strip_str)
 
         st.stop()
 

@@ -130,6 +130,12 @@ def summarize_geschaeft(biz_short: str, subject: str,
     return _ask("\n".join(l for l in lines if l is not None))
 
 
+def summarize_chart_filtered(chart_name: str, data_summary: str) -> str:
+    """Like summarize_chart_overview but returns a formatted string for ai_button."""
+    bullets = summarize_chart_overview(chart_name, data_summary)
+    return "\n\n".join(f"• {b}" for b in bullets) if bullets else "Keine Zusammenfassung verfügbar."
+
+
 def summarize_chart_overview(chart_name: str, data_summary: str) -> list[str]:
     """Return 3-4 German bullet strings summarizing a chart's key observations."""
     raw = _ask(
