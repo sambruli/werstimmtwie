@@ -108,6 +108,13 @@ div[data-testid="stSidebar"] div[data-testid="stButton"] button:focus {
 div[data-testid="stSidebar"] div[data-testid="stButton"] {
     margin-bottom: 0 !important;
 }
+/* ── Plotly charts: default arrow cursor instead of move/crosshair ── */
+.js-plotly-plot .plotly .cursor-move,
+.js-plotly-plot .plotly .cursor-crosshair,
+.js-plotly-plot .plotly .cursor-ew-resize,
+.js-plotly-plot .plotly .cursor-ns-resize {
+    cursor: default !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -269,7 +276,8 @@ def get_mp_pca():
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_vote_polarity_scatter():
-    """Per roll-call: % of right-bloc members voting with left, and vice versa."""
+    """Per roll-call: % of non-left members voting with left, and non-right with right.
+    Center (GL, M-E) is included in both axes."""
     import numpy as np
     av  = get_all_votes()
     m   = get_members()
@@ -281,7 +289,6 @@ def get_vote_polarity_scatter():
     right_fracs = {"V", "RL"}
     active_dec  = {"Ja", "Nein", "Enthaltung"}
 
-    # Bloc majority positions per GroupKey
     def _bloc_pos(fracs):
         cols = [f for f in fracs if f in pos.columns]
         if not cols:
@@ -292,8 +299,6 @@ def get_vote_polarity_scatter():
 
     lpos = _bloc_pos(left_fracs)
     rpos = _bloc_pos(right_fracs)
-
-    # Only polarising votes: left and right blocs disagree
     polar_gks = set(pos.index[lpos.notna() & rpos.notna() & (lpos != rpos)])
 
     active = av[av["DecisionNorm"].isin(active_dec) & av["GroupKey"].isin(polar_gks)].copy()
@@ -301,24 +306,137 @@ def get_vote_polarity_scatter():
     active["LeftPos"]  = active["GroupKey"].map(lpos)
     active["RightPos"] = active["GroupKey"].map(rpos)
 
-    # DevLeft: right-bloc member voted with left-bloc majority
-    active["DevLeft"]    = (active["FractionAbbr"].isin(right_fracs) &
+    # X-axis: center + right-bloc members who voted with the left majority
+    not_left  = {"V", "RL", "GL", "M-E"}
+    # Y-axis: left-bloc + center members who voted with the right majority
+    not_right = {"G", "S", "GL", "M-E"}
+
+    active["DevLeft"]    = (active["FractionAbbr"].isin(not_left) &
                             (active["DecisionNorm"] == active["LeftPos"])).astype(int)
-    active["IsRight"]    = active["FractionAbbr"].isin(right_fracs).astype(int)
-    # DevRight: left-bloc member voted with right-bloc majority
-    active["DevRight"]   = (active["FractionAbbr"].isin(left_fracs) &
+    active["IsNotLeft"]  = active["FractionAbbr"].isin(not_left).astype(int)
+    active["DevRight"]   = (active["FractionAbbr"].isin(not_right) &
                             (active["DecisionNorm"] == active["RightPos"])).astype(int)
-    active["IsLeft"]     = active["FractionAbbr"].isin(left_fracs).astype(int)
+    active["IsNotRight"] = active["FractionAbbr"].isin(not_right).astype(int)
 
     agg = active.groupby("GroupKey").agg(
         DevLeft=("DevLeft", "sum"),
-        TotalRight=("IsRight", "sum"),
+        TotalNotLeft=("IsNotLeft", "sum"),
         DevRight=("DevRight", "sum"),
-        TotalLeft=("IsLeft", "sum"),
+        TotalNotRight=("IsNotRight", "sum"),
     ).reset_index()
 
-    agg["PctDevLeft"]  = (agg["DevLeft"]  / agg["TotalRight"].clip(lower=1) * 100).round(1)
-    agg["PctDevRight"] = (agg["DevRight"] / agg["TotalLeft"].clip(lower=1)  * 100).round(1)
+    agg["PctDevLeft"]  = (agg["DevLeft"]  / agg["TotalNotLeft"].clip(lower=1)  * 100).round(1)
+    agg["PctDevRight"] = (agg["DevRight"] / agg["TotalNotRight"].clip(lower=1) * 100).round(1)
+
+    meta = (av[["GroupKey", "BizShort", "BizTitle", "Subject", "MeetingDate"]]
+            .drop_duplicates("GroupKey"))
+    return agg.merge(meta, on="GroupKey", how="left")
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_direction_magnitude_scatter():
+    """Per roll-call: Y = overall deviation rate, X = net political gravity of deviators,
+    color = coalition type. Only polarising votes (left ≠ right bloc)."""
+    import numpy as np
+    av  = get_all_votes()
+    m   = get_members()
+    pos = get_positions()
+    if av.empty or pos.empty:
+        return pd.DataFrame()
+
+    FRAC_SCORE  = {"G": -3, "S": -2, "GL": -1, "M-E": 1, "RL": 2, "V": 3}
+    left_fracs  = {"G", "S"}
+    right_fracs = {"V", "RL"}
+    active_dec  = {"Ja", "Nein", "Enthaltung"}
+
+    def _bloc_pos(fracs):
+        cols = [f for f in fracs if f in pos.columns]
+        if not cols:
+            return pd.Series(dtype=str)
+        return pos[cols].apply(
+            lambda row: row.dropna().mode().iloc[0] if row.notna().any() else None, axis=1
+        )
+
+    lpos = _bloc_pos(left_fracs)
+    rpos = _bloc_pos(right_fracs)
+    polar_gks = set(pos.index[lpos.notna() & rpos.notna() & (lpos != rpos)])
+
+    active = av[av["DecisionNorm"].isin(active_dec) & av["GroupKey"].isin(polar_gks)].copy()
+    active = active.merge(m[["PersonNumber", "FractionAbbr"]], on="PersonNumber", how="inner")
+
+    frac_cols = [f for f in FRAC_SCORE if f in pos.columns]
+    pos_long = pos[frac_cols].stack().reset_index()
+    pos_long.columns = ["GroupKey", "FractionAbbr", "FracMajority"]
+    active = active.merge(pos_long, on=["GroupKey", "FractionAbbr"], how="left")
+    active = active.dropna(subset=["FracMajority"])
+    active["Deviated"] = active["DecisionNorm"] != active["FracMajority"]
+
+    active["LeftVote"]     = active["GroupKey"].map(lpos)
+    active["RightVote"]    = active["GroupKey"].map(rpos)
+    active["FracScoreAbs"] = active["FractionAbbr"].map(lambda f: abs(FRAC_SCORE.get(f, 0)))
+
+    # For each deviating MP: -|score| if they crossed to the left side, +|score| to the right
+    left_dev  = active["Deviated"] & (active["DecisionNorm"] == active["LeftVote"])
+    right_dev = active["Deviated"] & (active["DecisionNorm"] == active["RightVote"])
+    active["DirectionContrib"] = float("nan")
+    active.loc[left_dev,  "DirectionContrib"] = -active.loc[left_dev,  "FracScoreAbs"]
+    active.loc[right_dev, "DirectionContrib"] =  active.loc[right_dev, "FracScoreAbs"]
+
+    dev_agg = (
+        active.groupby("GroupKey")
+        .agg(NActive=("Deviated", "count"), NDeviated=("Deviated", "sum"))
+        .reset_index()
+    )
+    dev_agg["DeviationPct"] = (
+        dev_agg["NDeviated"] / dev_agg["NActive"].clip(lower=1) * 100
+    ).round(1)
+
+    grav_agg = (
+        active[active["Deviated"] & active["DirectionContrib"].notna()]
+        .groupby("GroupKey")["DirectionContrib"]
+        .mean().div(3).round(3).reset_index()
+        .rename(columns={"DirectionContrib": "NetGravity"})
+    )
+
+    agg = dev_agg.merge(grav_agg, on="GroupKey", how="left")
+    agg["NetGravity"] = agg["NetGravity"].fillna(0)
+
+    pos_sub = pos[frac_cols].copy()
+
+    def _classify(gk):
+        if gk not in pos_sub.index:
+            return "Andere"
+        row = pos_sub.loc[gk]
+        valid = {f: row[f] for f in FRAC_SCORE
+                 if f in row.index and pd.notna(row[f]) and row[f] in ("Ja", "Nein")}
+        if len(valid) < 3:
+            return "Andere"
+        ja_f  = {f for f, v in valid.items() if v == "Ja"}
+        nei_f = {f for f, v in valid.items() if v == "Nein"}
+        if not ja_f or not nei_f:
+            return "Konsens"
+        ja_sc  = sum(FRAC_SCORE[f] for f in ja_f)  / len(ja_f)
+        nei_sc = sum(FRAC_SCORE[f] for f in nei_f) / len(nei_f)
+        lf = ja_f  if ja_sc  <= nei_sc else nei_f
+        rf = nei_f if ja_sc  <= nei_sc else ja_f
+        if len(lf) >= 5 or len(rf) >= 5:
+            return "Konsens"
+        for side in [lf, rf]:
+            if (side & {"G", "S"}) and (side & {"V", "RL"}):
+                return "Unheilige Allianz"
+        ctr   = {"GL", "M-E"}
+        cl    = ctr & lf
+        cr    = ctr & rf
+        has_l = bool(lf & {"G", "S"})
+        has_r = bool(rf & {"RL", "V"})
+        if has_l and has_r:
+            if cl and not cr:
+                return "Mitte kippt links"
+            if cr and not cl:
+                return "Mitte kippt rechts"
+            return "Parteilinien"
+        return "Andere"
+
+    agg["Koalitionstyp"] = agg["GroupKey"].apply(_classify)
 
     meta = (av[["GroupKey", "BizShort", "BizTitle", "Subject", "MeetingDate"]]
             .drop_duplicates("GroupKey"))
@@ -359,7 +477,8 @@ def clear_cache():
     for fn in (get_members, get_all_votes, get_mp_votes,
                get_fraction_votes, get_sessions, get_positions,
                get_all_mp_deviations, get_topic_fraction_cohesion,
-               get_mp_fraction_alignment, get_mp_pca, get_sunburst_data):
+               get_mp_fraction_alignment, get_mp_pca, get_sunburst_data,
+               get_vote_polarity_scatter, get_direction_magnitude_scatter):
         fn.clear()
 
 def _has_db() -> bool:
@@ -397,6 +516,50 @@ def navigate_to_mp(pn: int):
     st.session_state["_nav_page"] = "Mitglied"
     st.session_state["_nav_pn"]   = int(pn)
     st.rerun()
+
+def navigate_to_geschaeft(biz_short: str):
+    st.session_state["_geschaeft_goto"] = str(biz_short)
+    st.session_state["nav_radio"]       = "Geschäft"
+    st.rerun()
+
+def _mp_click_nav(ev, key_suffix, members_df):
+    """Show a one-line navigation widget when a chart point (with PersonNumber
+    in customdata[0]) is clicked. Returns True when nav was triggered."""
+    if not (ev and ev.selection and ev.selection.points):
+        return False
+    try:
+        pn = int(ev.selection.points[0]["customdata"][0])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return False
+    row = members_df[members_df["PersonNumber"] == pn]
+    if row.empty:
+        return False
+    r = row.iloc[0]
+    _c1, _c2 = st.columns([5, 1])
+    _c1.info(
+        f"**{r['FirstName']} {r['LastName']}** · "
+        f"{frac_label(r['FractionAbbr'])} · {r['CouncilAbbr']} · {r['CantonAbbr']}"
+    )
+    if _c2.button("→ Mitglied", key=f"_nav_{key_suffix}"):
+        navigate_to_mp(pn)
+    return True
+
+def _biz_click_nav(ev, key_suffix):
+    """Show a one-line navigation widget when a chart point (with BizShort
+    in customdata[2]) is clicked."""
+    if not (ev and ev.selection and ev.selection.points):
+        return False
+    try:
+        pt = ev.selection.points[0]
+        biz_short = pt["customdata"][2]
+        title     = pt["customdata"][0] or pt["customdata"][1] or ""
+    except (KeyError, IndexError, TypeError):
+        return False
+    _c1, _c2 = st.columns([5, 1])
+    _c1.info(f"Geschäft **{biz_short}**" + (f" — {str(title)[:80]}" if title else ""))
+    if _c2.button("→ Geschäft", key=f"_nav_{key_suffix}"):
+        navigate_to_geschaeft(biz_short)
+    return True
 
 def ai_button(key, fn, *args):
     if st.button("🤖 KI-Zusammenfassung", key=key):
@@ -477,7 +640,7 @@ Bei knapper Mehrheit (z.B. 52%) ist eine abweichende Stimme weniger auffällig a
 st.sidebar.title("🏛️ Wer stimmt wie?")
 check_api_key()
 
-_pages = ["Home", "Fraktion", "Mitglied", "Thema", "Geschäftssuche"]
+_pages = ["Home", "Fraktion", "Mitglied", "Thema", "Geschäft"]
 
 # Handle query-param navigation (from HTML link clicks)
 _qp_nav = st.query_params.get("_nav")
@@ -553,6 +716,7 @@ if page == "Home":
                 "PC1": False,
             },
             category_orders={"Fraktion": frac_order_labels()},
+            custom_data=["PersonNumber"],
             labels={"CouncilAbbr": "Rat", "CantonAbbr": "Kanton",
                     "Abweichung (%)": "Abweichung vom Fraktionskurs (%)"},
         )
@@ -572,7 +736,10 @@ if page == "Home":
             height=480,
             margin=dict(l=50, r=20, t=20, b=60),
         )
-        st.plotly_chart(_fig_pca, use_container_width=True)
+        _ev_pca = st.plotly_chart(
+            _fig_pca, use_container_width=True,
+            key="home_pca", on_select="rerun",
+        )
         st.caption(
             "Jeder Punkt ist ein Parlamentsmitglied. "
             "X-Achse (horizontale Position): politische Ausrichtung, berechnet aus dem tatsächlichen "
@@ -585,8 +752,9 @@ if page == "Home":
             "messbar öfter mit linken Fraktionen überein als seine Fraktionskolleg:innen. "
             "Y-Achse (vertikale Position): Abweichungsrate vom Fraktionskurs — wie oft jemand "
             "anders stimmt als die Mehrheit der eigenen Fraktion. "
-            "Hover für Name und Details."
+            "Punkt anklicken für Direktnavigation."
         )
+        _mp_click_nav(_ev_pca, "home_pca", get_members())
 
     st.markdown("---")
     st.subheader("So verwendest du die App")
@@ -600,7 +768,7 @@ if page == "Home":
         "anderen Kammer.\n\n"
         "**Thema** — Wähle ein politisches Thema (z.B. Klima, Migration, Soziales) und sieh, "
         "wie geschlossen die Fraktionen abstimmten und wer am stärksten von der eigenen Linie abwich.\n\n"
-        "**Geschäftssuche** — Suche nach einer Geschäftsnummer (z.B. `23.456`) oder einem "
+        "**Geschäft** — Suche nach einer Geschäftsnummer (z.B. `23.456`) oder einem "
         "Stichwort und sieh, wie jede Fraktion und jedes Mitglied bei jeder einzelnen "
         "Abstimmung votierte."
     )
@@ -785,20 +953,24 @@ elif page == "Thema":
             color="FractionAbbr",
             color_discrete_map=frac_color_map(),
             hover_data=["Fraktion", "CouncilAbbr", "Kanton", "Abweichend", "Total"],
+            custom_data=["PersonNumber"],
             title=f"Abweichungsrate auf Thema: {topic}",
             category_orders={"FractionAbbr": FRAC_ORDER},
             height=max(350, len(show_plot) * 22),
         )
         fig2.update_layout(yaxis={"categoryorder": "total ascending"},
                            showlegend=False)
-        st.plotly_chart(fig2, use_container_width=True)
-
-        st.markdown("**Mitglied im Detail ansehen:**")
-        _tn = show["Name"].tolist()
-        _tp = show["PersonNumber"].tolist()
-        _sel = st.selectbox("", _tn, key="thema_nav_sel", label_visibility="collapsed")
-        if st.button("→ Zur Mitglied-Seite", key="thema_nav_btn"):
-            navigate_to_mp(_tp[_tn.index(_sel)])
+        _ev_thema = st.plotly_chart(
+            fig2, use_container_width=True,
+            key="thema_bar", on_select="rerun",
+        )
+        if not _mp_click_nav(_ev_thema, "thema_bar", members):
+            st.markdown("**Mitglied im Detail ansehen:**")
+            _tn = show["Name"].tolist()
+            _tp = show["PersonNumber"].tolist()
+            _sel = st.selectbox("", _tn, key="thema_nav_sel", label_visibility="collapsed")
+            if st.button("→ Zur Mitglied-Seite", key="thema_nav_btn"):
+                navigate_to_mp(_tp[_tn.index(_sel)])
 
     st.markdown("---")
     _thema_breakdown = dev_all[["FractionAbbr", "Abweichung (%)", "Abweichend", "Total"]].to_dict(orient="records") if not dev_all.empty else []
@@ -808,48 +980,56 @@ elif page == "Thema":
 # 3. GESCHÄFT
 # ════════════════════════════════════════════════════════════════════════════
 
-elif page == "Geschäftssuche":
-    st.title("Geschäftssuche")
+elif page == "Geschäft":
+    st.title("Geschäft")
     members   = get_members()
     all_votes = get_all_votes()
     if members.empty or all_votes.empty:
         no_data_stop()
 
+    _goto = st.session_state.pop("_geschaeft_goto", None)
     keyword = st.text_input(
         "Suche nach Geschäftsnummer oder Stichwort",
         placeholder="z.B. 23.456  oder  CO2-Gesetz",
         key="geschaeft_search",
+        value=_goto or "",
     )
 
     if not keyword.strip():
         # ── Landing: polarity scatter ─────────────────────────────────────
-        with st.spinner("Berechne Abstimmungspolarität…"):
+        st.subheader("Lagerwechsel")
+        with st.spinner("Berechne Lagerwechsel…"):
             _pol = get_vote_polarity_scatter()
         if not _pol.empty:
+            _pol_show = _pol.copy()
+            _pol_show["BizTitle"] = _pol_show["BizTitle"].fillna("")
+            _pol_show["Subject"]  = _pol_show["Subject"].fillna("")
             _fig_pol = px.scatter(
-                _pol,
+                _pol_show,
                 x="PctDevLeft",
                 y="PctDevRight",
-                hover_name="BizShort",
-                hover_data={
-                    "BizTitle": True,
-                    "Subject": True,
-                    "MeetingDate": True,
-                    "PctDevLeft": ":.1f",
-                    "PctDevRight": ":.1f",
-                },
+                custom_data=["BizTitle", "Subject", "BizShort", "MeetingDate"],
                 labels={
-                    "PctDevLeft":  "Abweichung nach links (% der SVP/FDP-Mitglieder, die mit links stimmten)",
-                    "PctDevRight": "Abweichung nach rechts (% der Grünen/SP-Mitglieder, die mit rechts stimmten)",
-                    "BizTitle": "Titel",
-                    "Subject": "Frage",
-                    "MeetingDate": "Datum",
+                    "PctDevLeft":  "Linksdrift (% der Mitte/FDP/SVP-Mitglieder, die mit G/SP stimmten)",
+                    "PctDevRight": "Rechtsdrift (% der G/SP/Mitte-Mitglieder, die mit FDP/SVP stimmten)",
                 },
                 opacity=0.55,
                 color_discrete_sequence=["#5c7caa"],
                 height=460,
             )
-            _fig_pol.update_traces(marker=dict(size=5))
+            _fig_pol.update_traces(
+                marker=dict(size=5),
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b><br>"
+                    "<b>%{customdata[1]}</b><br>"
+                    "<b>Geschäft %{customdata[2]}</b><br>"
+                    "<br>"
+                    "Linksdrift: %{x:.1f}%<br>"
+                    "Rechtsdrift: %{y:.1f}%<br>"
+                    "%{customdata[3]}"
+                    "<extra></extra>"
+                ),
+            )
             _fig_pol.update_layout(
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
@@ -857,14 +1037,154 @@ elif page == "Geschäftssuche":
                 xaxis=dict(showgrid=True, zeroline=True, zerolinewidth=1, zerolinecolor="#ccc"),
                 yaxis=dict(showgrid=True, zeroline=True, zerolinewidth=1, zerolinecolor="#ccc"),
             )
-            st.plotly_chart(_fig_pol, use_container_width=True)
-            st.caption(
-                "Jeder Punkt ist eine Abstimmung. X-Achse: Anteil der SVP/FDP-Mitglieder, "
-                "die mit der linken Fraktionsmehrheit (Grüne/SP) stimmten — je weiter rechts, "
-                "desto stärker die Linksbewegung im rechten Lager. Y-Achse: Anteil der "
-                "Grünen/SP-Mitglieder, die mit der rechten Fraktionsmehrheit (SVP/FDP) stimmten. "
-                "Abstimmungen oben rechts zeichnen sich durch hohe Abweichung in beide Richtungen aus."
+            _ev_pol = st.plotly_chart(
+                _fig_pol, use_container_width=True,
+                key="pol_scatter", on_select="rerun",
             )
+            st.caption(
+                "Jeder Punkt ist eine polarisierte Abstimmung. "
+                "**X-Achse**: Anteil der Mitte (GLP, M-E), FDP- und SVP-Mitglieder, "
+                "die mit der linken Mehrheit (G/SP) stimmten — je weiter rechts, desto "
+                "stärker der Linkszug im nicht-linken Lager. "
+                "**Y-Achse**: Anteil der Grünen-, SP- und Mitte-Mitglieder, "
+                "die mit der rechten Mehrheit (FDP/SVP) stimmten. "
+                "Oben rechts: starke Gegenbewegungen in beiden Lagern. "
+                "Punkt anklicken für Direktnavigation."
+            )
+            _biz_click_nav(_ev_pol, "pol_scatter")
+
+        # ── Landing: direction × magnitude scatter ────────────────────────
+        st.markdown("---")
+        st.subheader("Richtung & Stärke der Abweichungen")
+        with st.spinner("Berechne Richtungsanalyse…"):
+            _dm = get_direction_magnitude_scatter()
+        if not _dm.empty:
+            _COALITION_COLORS = {
+                "Parteilinien":      "#888888",
+                "Mitte kippt links": "#9B59B6",
+                "Mitte kippt rechts":"#1ABC9C",
+                "Konsens":           "#BDC3C7",
+                "Unheilige Allianz": "#E91E8C",
+            }
+            _COALITION_ORDER = [
+                "Parteilinien", "Mitte kippt links", "Mitte kippt rechts",
+                "Konsens", "Unheilige Allianz",
+            ]
+            _COALITION_DESCS = {
+                "Parteilinien":
+                    "Standard Links-Rechts-Block: G/SP gegen FDP/SVP. Die Mitte (GLP, M-E) "
+                    "ist geteilt oder ohne klare Mehrheit. Hohe Y-Werte bedeuten, dass viele "
+                    "einzelne MPs intern gegen ihre Fraktion stimmten — nicht, dass sich Blöcke "
+                    "vermischten.",
+                "Mitte kippt links":
+                    "GLP *und* M-E stimmten geschlossen mit G/SP gegen FDP/SVP. "
+                    "Die Linke hatte eine breite parlamentarische Mehrheit.",
+                "Mitte kippt rechts":
+                    "GLP *und* M-E stimmten geschlossen mit FDP/SVP gegen G/SP. "
+                    "Das rechte Lager hatte eine breite parlamentarische Mehrheit.",
+                "Konsens":
+                    "Mindestens 5 von 6 Fraktionen auf derselben Seite — "
+                    "eine seltene, parteiübergreifende Einigkeit.",
+                "Unheilige Allianz":
+                    "Ideologisch gegensätzliche Fraktionen stimmten zusammen: "
+                    "z.B. SP+SVP oder G+FDP — die übliche Lager-Logik ausser Kraft gesetzt.",
+            }
+
+            with st.expander("Was bedeuten die Koalitionstypen?"):
+                for _ct in _COALITION_ORDER:
+                    _col_dot, _col_txt = st.columns([0.04, 0.96])
+                    _col_dot.markdown(
+                        f"<div style='width:14px;height:14px;border-radius:50%;"
+                        f"background:{_COALITION_COLORS[_ct]};margin-top:3px'></div>",
+                        unsafe_allow_html=True,
+                    )
+                    _col_txt.markdown(f"**{_ct}** — {_COALITION_DESCS[_ct]}")
+
+            # Chart + checkboxes side by side
+            _chart_col, _chk_col = st.columns([5, 1])
+
+            _dm_active = []
+            with _chk_col:
+                st.markdown("**Anzeigen**")
+                for _ct in _COALITION_ORDER:
+                    if st.checkbox(
+                        _ct, value=True, key=f"dm_chk_{_ct}",
+                    ):
+                        _dm_active.append(_ct)
+
+            if not _dm_active:
+                _dm_active = list(_COALITION_ORDER)
+
+            _dm_show = _dm[_dm["Koalitionstyp"].isin(_dm_active)].copy()
+            _dm_show["BizTitle"] = _dm_show["BizTitle"].fillna("")
+            _dm_show["Subject"]  = _dm_show["Subject"].fillna("")
+
+            def _dir_label(x):
+                if abs(x) < 0.005:
+                    return f"Netto-Richtung = {x:.2f}"
+                return (f"← Zug nach links: {abs(x):.2f}"
+                        if x < 0 else f"Zug nach rechts →: {x:.2f}")
+
+            _dm_show["_DirLabel"] = _dm_show["NetGravity"].apply(_dir_label)
+
+            with _chart_col:
+                _fig_dm = px.scatter(
+                    _dm_show,
+                    x="NetGravity",
+                    y="DeviationPct",
+                    color="Koalitionstyp",
+                    color_discrete_map=_COALITION_COLORS,
+                    category_orders={"Koalitionstyp": _COALITION_ORDER},
+                    custom_data=["BizTitle", "Subject", "BizShort",
+                                 "_DirLabel", "MeetingDate", "Koalitionstyp"],
+                    labels={
+                        "NetGravity":   "← Zug nach links · Richtung · Zug nach rechts →",
+                        "DeviationPct": "Interne Abweichungsrate (%)",
+                    },
+                    opacity=0.65,
+                    height=480,
+                )
+                _fig_dm.update_traces(
+                    marker=dict(size=5),
+                    hovertemplate=(
+                        "<b>%{customdata[0]}</b><br>"
+                        "<b>%{customdata[1]}</b><br>"
+                        "<b>Geschäft %{customdata[2]}</b><br>"
+                        "<br>"
+                        "%{customdata[3]}<br>"
+                        "Abweichungsrate: %{y:.1f}%<br>"
+                        "Koalition: %{customdata[5]}<br>"
+                        "%{customdata[4]}"
+                        "<extra></extra>"
+                    ),
+                )
+                _fig_dm.update_layout(
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    margin=dict(l=20, r=20, t=30, b=20),
+                    xaxis=dict(
+                        showgrid=True, zeroline=True,
+                        zerolinewidth=1.5, zerolinecolor="#aaa",
+                        range=[-1.1, 1.1],
+                    ),
+                    yaxis=dict(showgrid=True, zeroline=False),
+                    legend=dict(orientation="v"),
+                    legend_title="",
+                )
+                _ev_dm = st.plotly_chart(
+                    _fig_dm, use_container_width=True,
+                    key="dm_scatter", on_select="rerun",
+                )
+
+            st.caption(
+                "Nur polarisierte Abstimmungen (Links- und Rechtslager stimmen unterschiedlich). "
+                "**X-Achse**: Netto-Richtung aller Abweichungen — gewichtet nach politischer Distanz "
+                "(SVP-Mitglied das links stimmt → starker Linkszug; GLP-Mitglied → schwacher Zug). "
+                "**Y-Achse**: Anteil aller Parlamentarier:innen, die gegen ihre *eigene* "
+                "Fraktionslinie stimmten — misst interne Disziplin, nicht Blockloyalität. "
+                "Punkt anklicken für Direktnavigation."
+            )
+            _biz_click_nav(_ev_dm, "dm_scatter")
         st.stop()
 
     with st.spinner("Suche…"):
@@ -1455,6 +1775,7 @@ elif page == "Fraktion":
                             "CouncilAbbr": True, "CantonAbbr": True,
                             "Total": True, "Deviated": True, "Abweichung (%)": True},
                 category_orders={"Fraktion": list(reversed(frac_order_labels()))},
+                custom_data=["PersonNumber"],
                 stripmode="overlay",
                 labels={"CouncilAbbr": "Rat", "CantonAbbr": "Kanton",
                         "Total": "Abstimmungen", "Deviated": "Abweichungen"},
@@ -1469,8 +1790,12 @@ elif page == "Fraktion":
                            range=[-1, _strip_mp["Abweichung (%)"].max() + 2]),
                 yaxis_title="", height=360, margin=dict(l=10, r=10, t=20, b=10),
             )
-            st.plotly_chart(_fig_mp_strip, use_container_width=True)
-            st.caption("Jeder Punkt ist ein Parlamentsmitglied. Hover für Name und Details.")
+            _ev_strip = st.plotly_chart(
+                _fig_mp_strip, use_container_width=True,
+                key="frac_strip", on_select="rerun",
+            )
+            st.caption("Jeder Punkt ist ein Parlamentsmitglied. Punkt anklicken für Direktnavigation.")
+            _mp_click_nav(_ev_strip, "frac_strip", members)
 
         st.stop()
 
