@@ -13,9 +13,11 @@ import pandas as pd
 DB   = Path(__file__).parent / "swiss_parl.db"
 HERE = Path(__file__).parent
 
-def export():
+def export(log=None):
+    if log is None:
+        log = print
     if not DB.exists():
-        print(f"ERROR: {DB} not found")
+        log(f"ERROR: {DB} not found")
         return
 
     conn = sqlite3.connect(DB)
@@ -28,13 +30,19 @@ def export():
 
     for name, sql in tables.items():
         df = pd.read_sql(sql, conn)
+        # Ensure mixed-type columns are stored as strings (e.g. Decision can be int or str)
+        if "Decision" in df.columns:
+            df["Decision"] = df["Decision"].astype(str)
         out = HERE / f"{name}.parquet"
         df.to_parquet(out, compression="zstd", index=False)
         mb = out.stat().st_size / 1e6
-        print(f"  {name}.parquet: {len(df):,} rows — {mb:.1f} MB")
+        log(f"  {name}.parquet: {len(df):,} rows — {mb:.1f} MB")
 
     conn.close()
-    print("Done. Commit votes.parquet, members.parquet, sessions.parquet to git.")
+    log("Done. Commit votes.parquet, members.parquet, sessions.parquet to git.")
+
+# alias used by xls_importer
+export_all = export
 
 if __name__ == "__main__":
     export()

@@ -83,10 +83,7 @@ st.set_page_config(
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_members():
-    m = load_members()
-    # The Swiss Parliament API's Voting entity contains only Nationalrat votes.
-    # The Ständerat does not publish individual electronic roll-call data via OData.
-    return m[m["CouncilAbbr"] == "NR"].copy() if "CouncilAbbr" in m.columns else m
+    return load_members()
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_all_votes():
@@ -463,16 +460,10 @@ if page == "Home":
     st.markdown("##### Abstimmungsanalyse Schweizer Parlamentarier:innen")
 
     st.markdown(
-        "Diese App analysiert das Abstimmungsverhalten aller Mitglieder des **Nationalrats** "
-        "(Legislatur 52, ab Dezember 2023). "
+        "Diese App analysiert das Abstimmungsverhalten aller Mitglieder des Schweizer Parlaments "
+        "(National- und Ständerat, Legislatur 52, ab Dezember 2023). "
         "Im Zentrum steht die Frage: Wer weicht wie oft von der Fraktionslinie ab — "
         "bei welchen Themen, in welche Richtung, und im Vergleich zu anderen Fraktionen?"
-    )
-    st.info(
-        "**Nur Nationalratsdaten:** Das Schweizer Parlament veröffentlicht keine elektronischen "
-        "Einzelabstimmungsdaten für den Ständerat. Die 46 Mitglieder des Ständerats stimmen "
-        "grösstenteils per Handerheben ab — diese Daten sind nicht maschinenlesbar verfügbar.",
-        icon="ℹ️",
     )
 
     # ── PCA political compass ─────────────────────────────────────────────
@@ -1208,19 +1199,19 @@ elif page == "Mitglied":
     # ── Kammernvergleich ──────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("Kammernvergleich")
-    st.info(
-        "Der Ständerat veröffentlicht keine elektronischen Einzelabstimmungsdaten. "
-        "Ein Kammernvergleich ist daher nicht möglich.",
-        icon="ℹ️",
+    st.caption(
+        "Wie stark stimmt dieses Mitglied mit der eigenen Fraktion in beiden Kammern überein?"
     )
-    if False:
+    with st.spinner("Berechne Kammernvergleich…"):
         cc = cross_chamber_mp(pn, get_all_votes(), members)
-    if False:
+
+    if not cc or not cc.get("vs_oth"):
         st.info(
             f"Kein Kammernvergleich möglich — {frac_label(frac)} "
-            f"hat keine Mitglieder in der anderen Kammer."
+            f"hat keine Mitglieder in der anderen Kammer mit gemeinsamen Geschäften. "
+            f"(SR-Daten werden schrittweise via XLS-Import ergänzt.)"
         )
-    if False:
+    else:
         own_lbl = f"{frac_label(cc['frac'])}-{cc['own_council']}"
         oth_lbl = f"{frac_label(cc['frac'])}-{cc['oth_council']}"
         kc1, kc2, kc3 = st.columns(3)
@@ -1448,9 +1439,33 @@ elif page == "Fraktion":
     # ── Kammernvergleich ──────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("Kammernvergleich NR vs SR")
-    st.info(
-        "Der Ständerat veröffentlicht keine elektronischen Einzelabstimmungsdaten. "
-        "Ein Kammernvergleich ist daher nicht möglich.",
-        icon="ℹ️",
-    )
+    with st.spinner("Berechne Kammernvergleich…"):
+        cc_df = cross_chamber_fraction(frac, all_votes, members)
+
+    if cc_df.empty:
+        st.info(
+            f"{frac_label(frac)} hat keine Mitglieder in beiden Kammern "
+            "mit gemeinsamen Abstimmungsgeschäften — kein Vergleich möglich. "
+            "(SR-Daten werden schrittweise via XLS-Import ergänzt.)"
+        )
+    else:
+        n_total  = len(cc_df)
+        n_einig  = int(cc_df["Einig"].sum())
+        pct_einig = round(n_einig / n_total * 100, 1) if n_total else 0
+        kc1, kc2 = st.columns(2)
+        kc1.metric("Gemeinsame Geschäfte", n_total)
+        kc2.metric("NR & SR einig", f"{pct_einig}%")
+
+        disagree = cc_df[~cc_df["Einig"]].copy()
+        if disagree.empty:
+            st.success("NR und SR stimmten auf allen gemeinsamen Geschäften gleich!")
+        else:
+            st.caption(f"{len(disagree)} Geschäfte mit abweichender Position:")
+            disag_disp = disagree[["BizShort", "BizTitle", "NR", "SR", "Datum"]].rename(
+                columns={"BizShort": "Geschäft", "BizTitle": "Titel"}
+            )
+            disag_disp["Curia Vista"] = disag_disp["Geschäft"].apply(_make_curia_url)
+            cfg = {"Curia Vista": st.column_config.LinkColumn("Curia Vista", display_text="↗")}
+            st.dataframe(disag_disp, column_config=cfg,
+                         use_container_width=True, height=300)
 
