@@ -883,7 +883,7 @@ elif page == "Mitglied":
                 ))
             _r += _nf
 
-        _height = _n_mps * 8 + 60   # 8 px per row in the plot area
+        _height = _n_mps * 8 + 90   # 8 px per row in the plot area (t=80, b=10)
         _fig_aln = make_subplots(
             rows=1, cols=2,
             column_widths=[0.025, 0.975],
@@ -903,7 +903,13 @@ elif page == "Mitglied":
             z=_z, x=_xlabels, y=_yints,
             colorscale="RdYlGn", zmin=30, zmax=100,
             showscale=True,
-            colorbar=dict(title="Übereinstimmung (%)", len=0.5, thickness=12),
+            colorbar=dict(
+                orientation="h",
+                x=0.57, xanchor="center",
+                y=0.985, yanchor="bottom",
+                len=0.5, thickness=12,
+                title=dict(text="Übereinstimmung (%)", side="top"),
+            ),
             xgap=1, ygap=0,
             hovertemplate="<b>%{text}</b><br>%{x}: %{z:.0f}%<extra></extra>",
             text=[[lb] * len(_frac_cols_present) for lb in _ylabels],
@@ -921,7 +927,7 @@ elif page == "Mitglied":
             yaxis=_shared_yaxis,
             xaxis=dict(showticklabels=False),
             xaxis2=dict(side="top", tickfont=dict(size=12)),
-            margin=dict(l=130, r=90, t=50, b=10),
+            margin=dict(l=130, r=20, t=80, b=10),
             height=_height,
             shapes=_shapes,
         )
