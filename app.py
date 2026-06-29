@@ -626,23 +626,54 @@ if page == "Home":
         "KI-Zusammenfassungen um — jede Anfrage verursacht Kosten."
     )
 
-    with st.form("feedback_form", clear_on_submit=True):
-        _fb_name = st.text_input("Name (optional)")
-        _fb_msg  = st.text_area("Nachricht / Feedback", height=120)
-        _fb_sent = st.form_submit_button("Absenden")
-
-    if _fb_sent:
-        if _fb_msg.strip():
-            import urllib.parse as _ul
-            _subj = _ul.quote("Feedback: werstimmtwie")
-            _body = _ul.quote(
-                f"Von: {_fb_name}\n\n{_fb_msg}" if _fb_name.strip() else _fb_msg
-            )
-            _mailto = f"mailto:samuel.bruelisauer@gmail.com?subject={_subj}&body={_body}"
-            st.link_button("✉️ E-Mail-Programm öffnen", _mailto)
-            st.caption("Klick öffnet dein E-Mail-Programm mit dem ausgefüllten Text.")
-        else:
-            st.warning("Bitte schreib eine Nachricht.")
+    import streamlit.components.v1 as _components
+    _components.html("""
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Source Sans Pro", sans-serif; }
+  body { background: transparent; }
+  input, textarea {
+    display: block; width: 100%; padding: 8px 12px; margin-bottom: 10px;
+    border: 1px solid rgba(150,150,150,0.35); border-radius: 6px;
+    background: rgba(150,150,150,0.07); color: inherit;
+    font-size: 14px; font-family: inherit; outline: none; resize: vertical;
+  }
+  input:focus, textarea:focus { border-color: #f63366; }
+  ::placeholder { color: rgba(150,150,150,0.7); }
+  button {
+    background: #f63366; color: #fff; border: none; border-radius: 6px;
+    padding: 8px 22px; font-size: 14px; font-family: inherit; cursor: pointer;
+  }
+  button:hover { background: #d42d58; }
+  #ok { display:none; color: #2ecc71; font-size: 14px; padding-top: 6px; }
+  #err { display:none; color: #e74c3c; font-size: 13px; margin-bottom: 6px; }
+</style>
+<form id="fb">
+  <input type="text" id="nm" placeholder="Name (optional)">
+  <textarea id="msg" rows="4" placeholder="Nachricht"></textarea>
+  <div id="err">Bitte schreib eine Nachricht.</div>
+  <button type="submit">Absenden</button>
+</form>
+<div id="ok">Danke! Dein E-Mail-Programm öffnet sich gleich mit dem Text.</div>
+<script>
+document.getElementById('fb').addEventListener('submit', function(e) {
+  e.preventDefault();
+  var msg = document.getElementById('msg').value.trim();
+  if (!msg) { document.getElementById('err').style.display='block'; return; }
+  document.getElementById('err').style.display = 'none';
+  var name = document.getElementById('nm').value.trim();
+  var body = name ? 'Von: ' + name + '\\n\\n' + msg : msg;
+  var a = document.createElement('a');
+  a.href = 'mailto:samuel.bruelisauer@gmail.com'
+         + '?subject=' + encodeURIComponent('Feedback: werstimmtwie')
+         + '&body='    + encodeURIComponent(body);
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  document.getElementById('fb').style.display = 'none';
+  document.getElementById('ok').style.display = 'block';
+});
+</script>
+""", height=235)
 
 # ════════════════════════════════════════════════════════════════════════════
 # 2. THEMA
