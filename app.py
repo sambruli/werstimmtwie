@@ -591,14 +591,18 @@ if page == "Home":
     st.markdown("---")
     st.subheader("So verwendest du die App")
     st.markdown(
-        "**Thema** — Wähle ein politisches Thema (z.B. Klima, Migration) und sieh, "
-        "wie kohäsiv die Fraktionen abstimmten und wer am stärksten von der eigenen Linie abwich.\n\n"
-        "**Geschäft** — Suche nach einer Geschäftsnummer (z.B. `23.456`) oder einem Stichwort "
-        "und sieh, wie jede Fraktion bei jeder einzelnen Abstimmung votierte.\n\n"
-        "**Mitglied** — Wähle ein Parlamentsmitglied und erhalte ein detailliertes Profil: "
-        "Gesamtabweichung, Abweichung nach Thema, und eine Liste aller abweichenden Abstimmungen.\n\n"
-        "**Fraktion** — Vergleiche Kohäsion und Abweichungsraten innerhalb einer Fraktion, "
-        "inklusive Heatmap über alle Abstimmungen."
+        "**Fraktion** — Übersicht über alle Fraktionen: Kohäsionsvergleich, Abweichungsraten "
+        "der einzelnen Mitglieder, Richtungsanalyse (mit welchen anderen Fraktionen wird bei "
+        "Abweichungen gestimmt?) und ein Kammernvergleich NR vs. SR.\n\n"
+        "**Mitglied** — Detailprofil eines Parlamentsmitglieds: Gesamtabweichung vom "
+        "Fraktionskurs, Abweichung nach Thema und Session, Richtungsanalyse, vollständige "
+        "Abstimmungshistorie — und ein Vergleich mit den Fraktionskolleg:innen in der "
+        "anderen Kammer.\n\n"
+        "**Thema** — Wähle ein politisches Thema (z.B. Klima, Migration, Soziales) und sieh, "
+        "wie geschlossen die Fraktionen abstimmten und wer am stärksten von der eigenen Linie abwich.\n\n"
+        "**Geschäftssuche** — Suche nach einer Geschäftsnummer (z.B. `23.456`) oder einem "
+        "Stichwort und sieh, wie jede Fraktion und jedes Mitglied bei jeder einzelnen "
+        "Abstimmung votierte."
     )
 
     st.warning(
@@ -611,7 +615,34 @@ if page == "Home":
     st.info(_METHODOLOGY)
 
     st.markdown("---")
-    st.caption("📊 *Wähle eine Seite in der Navigation, um die Analyse zu starten.*")
+    st.subheader("Hintergrund & Feedback")
+    st.markdown(
+        "Diese App ist ein persönliches Nebenprojekt — kein professionelles Produkt, "
+        "keine Organisation dahinter. Ziel ist es, etwas mehr Transparenz über das tatsächliche "
+        "Abstimmungsverhalten im Parlament zu schaffen, jenseits von Parteiprogrammen und "
+        "Selbstdarstellung.\n\n"
+        "Die Infrastruktur- und API-Kosten werden aus dem persönlichen Budget gedeckt. "
+        "Bitte teile die App nur mit Personen, denen du vertraust, und geh sparsam mit den "
+        "KI-Zusammenfassungen um — jede Anfrage verursacht Kosten."
+    )
+
+    with st.form("feedback_form", clear_on_submit=True):
+        _fb_name = st.text_input("Name (optional)")
+        _fb_msg  = st.text_area("Nachricht / Feedback", height=120)
+        _fb_sent = st.form_submit_button("Absenden")
+
+    if _fb_sent:
+        if _fb_msg.strip():
+            import urllib.parse as _ul
+            _subj = _ul.quote("Feedback: werstimmtwie")
+            _body = _ul.quote(
+                f"Von: {_fb_name}\n\n{_fb_msg}" if _fb_name.strip() else _fb_msg
+            )
+            _mailto = f"mailto:samuel.bruelisauer@gmail.com?subject={_subj}&body={_body}"
+            st.link_button("✉️ E-Mail-Programm öffnen", _mailto)
+            st.caption("Klick öffnet dein E-Mail-Programm mit dem ausgefüllten Text.")
+        else:
+            st.warning("Bitte schreib eine Nachricht.")
 
 # ════════════════════════════════════════════════════════════════════════════
 # 2. THEMA
