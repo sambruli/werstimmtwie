@@ -23,25 +23,8 @@ import openpyxl
 from db import get_conn, init_db
 from scraper import _ensure_columns, LEGISLATURE
 
-# ── XLS layout constants ──────────────────────────────────────────────────────
-_ROW_TITLE    = 1   # 0-indexed row with session title
-_ROW_NAMES    = 3   # member names ("Nachname, Vorname")
-_ROW_CANTONS  = 4
-_ROW_GENDERS  = 5
-_ROW_FRACS    = 6
-_ROW_HEADERS  = 7   # column header row (Geschäftsnummer, …)
-_ROW_DATA     = 8   # first data row (0-indexed)
-_COL_META_END = 10  # cols 0–9 are roll-call metadata; col 10 is separator
-_COL_BIZ_NUM  = 0
-_COL_BIZ_TITLE = 1
-_COL_BIZ_TYPE  = 2
-_COL_DRAFT_NUM = 3
-_COL_DRAFT_TITLE = 4
-_COL_REF_NUM  = 5   # Referenznummer — unique roll-call ID
-_COL_DATE     = 6
-_COL_SUBJECT  = 7
-_COL_MEAN_YES = 8
-_COL_MEAN_NO  = 9
+# Parliament XLS files come in multiple format variants across legislatures.
+# We detect the layout at parse time rather than hardcoding row/column constants.
 
 # ── Vote value normalisation ──────────────────────────────────────────────────
 _VOTE_MAP = {
@@ -78,7 +61,12 @@ def _parse_date(s):
 
 def _biz_short(biz_num):
     """Format 8-digit business number as 'YYYY.NNN'."""
-    s = str(int(biz_num)) if biz_num else ""
+    if not biz_num:
+        return ""
+    try:
+        s = str(int(biz_num))
+    except (ValueError, TypeError):
+        return str(biz_num)[:20]
     if len(s) == 8:
         return f"{s[:4]}.{s[4:]}"
     return s
@@ -128,6 +116,84 @@ def _fuzzy_match(name_xls, lookup):
             return pn
     return None
 
+# ── Format auto-detection ─────────────────────────────────────────────────────
+
+def _detect_layout(rows):
+    """
+    Scan the first 20 rows to find member names and column positions.
+    Returns (member_cols, col_map, data_row_start) or raises ValueError.
+
+    Handles all parliament XLS format variants (pre-2024, 2024, 2025+).
+    """
+    member_row_idx = None
+    member_col_start = None
+    header_row_idx = None
+
+    for i, row in enumerate(rows[:20]):
+        for j, cell in enumerate(row):
+            cs = str(cell or "").lower()
+            # Label cell before member names
+            if "name des ratsmitglied" in cs:
+                member_row_idx = i
+                member_col_start = j + 1  # names start one col to the right of the label
+                break
+        if member_row_idx is not None:
+            break
+
+    if member_row_idx is None:
+        raise ValueError("Kein Mitglieder-Header gefunden")
+
+    # Find column-header row: the first row after member header whose col 0
+    # contains a recognisable metadata keyword
+    for i in range(member_row_idx + 1, min(len(rows), member_row_idx + 15)):
+        row = rows[i]
+        cs0 = str(row[0] if row else "").lower()
+        if any(k in cs0 for k in ("geschäftsnummer", "abstimmungsdatum", "geschaftsnummer")):
+            header_row_idx = i
+            break
+
+    if header_row_idx is None:
+        raise ValueError("Kein Spaltenheader-Row gefunden")
+
+    # Build column map from header row
+    hrow = rows[header_row_idx]
+    col_map = {}
+    for j, cell in enumerate(hrow):
+        cs = str(cell or "").lower()
+        if "geschäftsnummer" in cs or "geschaftsnummer" in cs:
+            col_map.setdefault("biz_num", j)
+        if "geschäftstitel" in cs or "geschaftstitel" in cs:
+            col_map.setdefault("biz_title", j)
+        if "vorlagetitel" in cs or "entwurftitel" in cs:
+            col_map.setdefault("draft_title", j)
+        if "referenznummer" in cs:
+            col_map["ref_num"] = j
+        if "datum der abstimmung" in cs or "abstimmungsdatum" in cs:
+            col_map["date"] = j
+        if "abstimmungsgegenstand" in cs:
+            col_map["subject"] = j
+        if "bedeutung ja" in cs:
+            col_map["mean_yes"] = j
+        if "bedeutung nein" in cs:
+            col_map["mean_no"] = j
+
+    required = {"ref_num", "date"}
+    missing = required - col_map.keys()
+    if missing:
+        raise ValueError(f"Fehlende Pflicht-Spalten: {missing}")
+
+    # Collect member columns from the member name row
+    name_row = rows[member_row_idx]
+    member_cols = []
+    for j in range(member_col_start, len(name_row)):
+        name = name_row[j]
+        if name and "," in str(name):
+            member_cols.append({"col": j, "name_xls": str(name)})
+
+    data_row_start = header_row_idx + 1
+    return member_cols, col_map, data_row_start
+
+
 # ── Core importer ─────────────────────────────────────────────────────────────
 def import_xls(filepath, council="SR", log=None):
     """
@@ -146,20 +212,17 @@ def import_xls(filepath, council="SR", log=None):
     rows = list(ws.iter_rows(values_only=True))
     wb.close()
 
-    # ── Parse member header rows ──────────────────────────────────────────
-    names_row = rows[_ROW_NAMES]
-    frac_row  = rows[_ROW_FRACS]
-
-    member_cols = []
-    for col_idx, name in enumerate(names_row):
-        if name and "," in str(name) and col_idx >= _COL_META_END:
-            frac_raw = frac_row[col_idx] if col_idx < len(frac_row) else ""
-            frac = str(frac_raw or "").replace("Fraktion ", "").strip()
-            member_cols.append({"col": col_idx, "name_xls": str(name), "frac": frac})
+    # ── Auto-detect layout ────────────────────────────────────────────────
+    try:
+        member_cols, col_map, data_row_start = _detect_layout(rows)
+    except ValueError as e:
+        if log:
+            log(f"  {path.name}: Layout-Erkennung fehlgeschlagen — {e}")
+        return 0
 
     if not member_cols:
         if log:
-            log(f"  {path.name}: Keine Mitgliederspalten gefunden — Format unbekannt.")
+            log(f"  {path.name}: Keine Mitgliederspalten gefunden.")
         return 0
 
     # ── Match to DB PersonNumbers ─────────────────────────────────────────
@@ -176,18 +239,29 @@ def import_xls(filepath, council="SR", log=None):
         log(f"  {path.name}: {matched}/{len(member_cols)} Mitglieder zugeordnet")
         if unmatched:
             log(f"    Nicht gefunden: {unmatched[:5]}" +
-                (f" … (+{len(unmatched)-5})" if len(unmatched) > 5 else ""))
+                (f" (+{len(unmatched)-5} weitere)" if len(unmatched) > 5 else ""))
 
-    # ── Find matching session ─────────────────────────────────────────────
-    data_rows = [r for r in rows[_ROW_DATA:]
-                 if len(r) > _COL_BIZ_NUM and r[_COL_BIZ_NUM] is not None]
-    dates = [_parse_date(r[_COL_DATE]) for r in data_rows]
+    # ── Find matching session from vote dates ────────────────────────────
+    col_date = col_map["date"]
+    col_ref  = col_map["ref_num"]
+    col_biz  = col_map.get("biz_num")
+    col_btit = col_map.get("biz_title")
+    col_dtit = col_map.get("draft_title")
+    col_subj = col_map.get("subject")
+    col_yes  = col_map.get("mean_yes")
+    col_no   = col_map.get("mean_no")
+
+    def _cell(row, col):
+        return row[col] if col is not None and col < len(row) else None
+
+    data_rows = [r for r in rows[data_row_start:]
+                 if len(r) > col_date and _cell(r, col_ref) is not None]
+    dates = [_parse_date(_cell(r, col_date)) for r in data_rows]
     session_id, session_name = _find_session(dates, conn)
 
     if not session_id:
         if log:
-            log(f"  {path.name}: Keine passende Session gefunden "
-                f"(erste Daten: {dates[:3]})")
+            log(f"  {path.name}: Keine passende Session (Daten: {dates[:2]})")
         conn.close()
         return 0
 
@@ -198,23 +272,22 @@ def import_xls(filepath, council="SR", log=None):
     # ── Insert votes ──────────────────────────────────────────────────────
     total = 0
     for row in data_rows:
-        ref_num  = row[_COL_REF_NUM]
-        gk       = f"{council}-{ref_num}"
-        date     = _parse_date(row[_COL_DATE])
-        biz_num  = row[_COL_BIZ_NUM]
-        subject  = str(row[_COL_SUBJECT]  or "")[:200]
-        mean_yes = str(row[_COL_MEAN_YES] or "")[:300]
-        mean_no  = str(row[_COL_MEAN_NO]  or "")[:300]
-        biz_title = str(row[_COL_BIZ_TITLE] or "")[:200]
-        draft_title = str(row[_COL_DRAFT_TITLE] or "")[:200]
+        ref_num   = _cell(row, col_ref)
+        gk        = f"{council}-{ref_num}"
+        date      = _parse_date(_cell(row, col_date))
+        biz_num   = _cell(row, col_biz)
+        biz_title = str(_cell(row, col_btit) or "")[:200]
+        dft_title = str(_cell(row, col_dtit) or "")[:200]
+        subject   = str(_cell(row, col_subj) or "")[:200]
+        mean_yes  = str(_cell(row, col_yes)  or "")[:300]
+        mean_no   = str(_cell(row, col_no)   or "")[:300]
         biz_short = _biz_short(biz_num)
-        # Use BizTitle if present, fall back to draft title
-        title = biz_title or draft_title
+        title     = biz_title or dft_title
 
         for m in member_cols:
             if not m["pn"]:
                 continue
-            raw  = row[m["col"]] if m["col"] < len(row) else None
+            raw  = _cell(row, m["col"])
             norm = _norm_vote(raw)
             conn.execute("""
                 INSERT INTO votes
@@ -252,7 +325,7 @@ def import_xls_dir(directory, council="SR", log=None):
         n = import_xls(f, council=council, log=log)
         total += n
         if log:
-            log(f"  → {n} Einträge importiert")
+            log(f"  -> {n} Eintraege importiert")
     if log:
         log(f"Gesamt: {total} Einträge aus {len(files)} Dateien")
     return total
@@ -264,25 +337,28 @@ def import_xls_dir(directory, council="SR", log=None):
 # where CODE: WS=Wintersession, FS=Frühjahrssession, SS=Sommersession,
 #             HS=Herbstsession, SO=Sondersession (number varies)
 _BASE_URL = (
-    "https://www.parlament.ch/de/ratsbetrieb/abstimmungen/"
-    "abstimmung-{council_lc}-xls/-/media/Abstimmungen_{council}_{code}_DE.xlsx"
+    "https://www.parlament.ch/centers/documents/de/"
+    "Abstimmungen_{council}_{code}_DE.xlsx"
 )
 
-# L52 session → file code mapping
+# L52 session → file code mapping.
+# Sondersessions: each entry lists the primary code to try plus alternates.
+# The 4th/5th Sondersession of a year is numbered accordingly; exact parliament
+# naming varies (SO4, SO5, etc.) so we try several candidates.
 _L52_SESSION_CODES = {
     5201: ("SR", "2023WS"),
     5202: ("SR", "2024FS"),
-    5203: ("SR", "2024SO1"),   # Sondersession – exact code may differ
+    5203: ("SR", "2024SO4"),   # Sondersession 4. 2024
     5204: ("SR", "2024SS"),
     5205: ("SR", "2024HS"),
     5206: ("SR", "2024WS"),
     5207: ("SR", "2025FS"),
-    5208: ("SR", "2025SO1"),   # Sondersession – exact code may differ
+    5208: ("SR", "2025SO5"),   # Sondersession 5. 2025
     5209: ("SR", "2025SS"),
     5210: ("SR", "2025HS"),
     5211: ("SR", "2025WS"),
     5212: ("SR", "2026FS"),
-    5213: ("SR", "2026SO1"),   # Sondersession – exact code may differ
+    5213: ("SR", "2026SO4"),   # Sondersession 4. 2026
     5214: ("SR", "2026SS"),
 }
 
@@ -320,19 +396,22 @@ def download_sr_xls(dest_dir, log=None):
             downloaded.append(fpath)
             continue
 
-        url = _BASE_URL.format(council_lc=council.lower(), council=council, code=code)
+        url = _BASE_URL.format(council=council, code=code)
         if log:
             log(f"  {fname}: lade…")
         if _try_download(url, fpath, log):
             downloaded.append(fpath)
         else:
-            # Try alternate Sondersession codes (SO, SO2, SS2, etc.)
-            for alt in [code.replace("SO1", "SO"), code.replace("SO1", "SS2"),
-                        code.replace("SO1", "SO2")]:
-                if alt == code:
-                    continue
-                alt_url = _BASE_URL.format(
-                    council_lc=council.lower(), council=council, code=alt)
+            # Try alternate codes for Sondersessions (different numbering conventions)
+            year = code[:4]
+            num_suffix = code[6:] if len(code) > 6 else ""
+            alts = []
+            for variant in ["SO", "SO1", "SO2", "SO3", "SO4", "SO5", "SO6"]:
+                candidate = f"{year}{variant}"
+                if candidate != code:
+                    alts.append(candidate)
+            for alt in alts[:5]:  # try up to 5 variants
+                alt_url = _BASE_URL.format(council=council, code=alt)
                 if log:
                     log(f"    Alternativ: {alt}…")
                 alt_path = dest / f"Abstimmungen_{council}_{alt}_DE.xlsx"
