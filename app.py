@@ -594,6 +594,11 @@ def ai_button(key, fn, *args):
 
 _GESAMTBILD_FILE = DB_PATH.parent / "gesamtbild_cache.json"
 
+def _summarize_chart_filtered(chart_name: str, data_summary: str) -> str:
+    """Wrapper for ai_button: returns formatted bullet string for a filtered chart."""
+    bullets = summarizer.summarize_chart_overview(chart_name, data_summary)
+    return "\n\n".join(f"• {b}" for b in bullets) if bullets else "Keine Zusammenfassung verfügbar."
+
 def _show_gesamtbild_persistent(chart_id: str, data_summary: str):
     """Display Gesamtbild from file cache; regenerates + saves only when data hash changes."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -1305,7 +1310,7 @@ elif page == "Geschäft":
             )
             ai_button(
                 "dm_gesamtbild",
-                summarizer.summarize_chart_filtered,
+                _summarize_chart_filtered,
                 "Richtung & Stärke der Abweichungen",
                 _dm_str,
             )
