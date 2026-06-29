@@ -836,11 +836,12 @@ elif page == "Mitglied":
     )
     pn = _mp_pns[_mp_labels.index(_sel_label)]
 
-    # ── MP × Fraktion alignment heatmap ──────────────────────────────────
-    with st.spinner("Berechne Übereinstimmungsmatrix…"):
+    # ── MP × Fraktion alignment heatmap (only when none selected) ────────
+    if pn is None:
+      with st.spinner("Berechne Übereinstimmungsmatrix…"):
         _aln = get_mp_fraction_alignment()
 
-    if not _aln.empty:
+      if not _aln.empty:
         from plotly.subplots import make_subplots
         _aln_plot = _aln[_aln["FractionAbbr"].isin(FRAC_ORDER)].copy()
         _aln_sorted = pd.concat([
