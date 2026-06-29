@@ -1109,45 +1109,6 @@ elif page == "Fraktion":
 
     st.title("Fraktionen")
 
-    # ── Landing: Kohäsion aller Fraktionen ───────────────────────────────
-    with st.spinner("Berechne Kohäsion…"):
-        all_votes = get_all_votes()
-        coh_all   = fraction_cohesion(all_votes, members)
-
-    if not coh_all.empty:
-        _coh_plot = coh_all[coh_all["Fraktion"].isin(FRAC_ORDER)].copy()
-        _coh_plot["FraktionLabel"] = _coh_plot["Fraktion"].apply(frac_label)
-        _fig_coh = px.bar(
-            _coh_plot,
-            x="FraktionLabel", y="Kohäsion (%)",
-            color="FraktionLabel",
-            color_discrete_map={frac_label(a): FRAC_COLORS[a] for a in FRAC_ORDER},
-            text="Kohäsion (%)",
-            hover_data={"FraktionLabel": False, "Mitglieder": True, "Kohäsion (%)": True},
-            category_orders={"FraktionLabel": frac_order_labels()},
-        )
-        _fig_coh.update_traces(
-            texttemplate="%{text:.1f}%",
-            textposition="outside",
-            textfont=dict(size=13),
-        )
-        _fig_coh.update_layout(
-            showlegend=False,
-            xaxis_title="",
-            yaxis=dict(title="Kohäsion (%)", range=[0, 105]),
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            height=360,
-            margin=dict(l=20, r=20, t=20, b=20),
-        )
-        st.plotly_chart(_fig_coh, use_container_width=True)
-        st.caption(
-            "Anteil der Abstimmungen, bei denen alle anwesenden Fraktionsmitglieder gleich stimmten. "
-            "Je höher, desto disziplinierter die Fraktion."
-        )
-
-    st.markdown("---")
-
     # ── Fraction selector ─────────────────────────────────────────────────
     _frac_opts_ordered = [f for f in FRAC_ORDER if f in members["FractionAbbr"].values]
     _frac_other = sorted([f for f in members["FractionAbbr"].dropna().unique()
@@ -1156,8 +1117,49 @@ elif page == "Fraktion":
     _frac_sel_labels = ["— Fraktion auswählen —"] + [frac_label(a) for a in _all_frac_abbrs]
 
     _frac_sel = st.selectbox("🔍 Fraktion auswählen", _frac_sel_labels, key="frac_sel")
+
+    # ── Landing: Kohäsion aller Fraktionen (only when none selected) ──────
     if _frac_sel == "— Fraktion auswählen —":
+        with st.spinner("Berechne Kohäsion…"):
+            all_votes = get_all_votes()
+            coh_all   = fraction_cohesion(all_votes, members)
+
+        if not coh_all.empty:
+            _coh_plot = coh_all[coh_all["Fraktion"].isin(FRAC_ORDER)].copy()
+            _coh_plot["FraktionLabel"] = _coh_plot["Fraktion"].apply(frac_label)
+            _fig_coh = px.bar(
+                _coh_plot,
+                x="FraktionLabel", y="Kohäsion (%)",
+                color="FraktionLabel",
+                color_discrete_map={frac_label(a): FRAC_COLORS[a] for a in FRAC_ORDER},
+                text="Kohäsion (%)",
+                hover_data={"FraktionLabel": False, "Mitglieder": True, "Kohäsion (%)": True},
+                category_orders={"FraktionLabel": frac_order_labels()},
+            )
+            _fig_coh.update_traces(
+                texttemplate="%{text:.1f}%",
+                textposition="outside",
+                textfont=dict(size=13),
+            )
+            _fig_coh.update_layout(
+                showlegend=False,
+                xaxis_title="",
+                yaxis=dict(title="Kohäsion (%)", range=[0, 105]),
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                height=360,
+                margin=dict(l=20, r=20, t=20, b=20),
+            )
+            st.plotly_chart(_fig_coh, use_container_width=True)
+            st.caption(
+                "Anteil der Abstimmungen, bei denen alle anwesenden Fraktionsmitglieder gleich stimmten. "
+                "Je höher, desto disziplinierter die Fraktion."
+            )
         st.stop()
+
+    with st.spinner("Berechne Kohäsion…"):
+        all_votes = get_all_votes()
+        coh_all   = fraction_cohesion(all_votes, members)
 
     frac      = _all_frac_abbrs[_frac_sel_labels.index(_frac_sel) - 1]
     frac_name = members.loc[members["FractionAbbr"] == frac, "FractionName"].iloc[0]
