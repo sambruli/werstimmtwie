@@ -79,6 +79,38 @@ st.set_page_config(
     layout="wide",
 )
 
+st.markdown("""
+<style>
+/* ── Sidebar nav buttons ── */
+div[data-testid="stSidebar"] div[data-testid="stButton"] button {
+    display: block !important;
+    background: none !important;
+    border: none !important;
+    box-shadow: none !important;
+    color: inherit !important;
+    font-size: 1rem !important;
+    font-weight: 400 !important;
+    padding: 0.45rem 0.9rem !important;
+    text-align: left !important;
+    border-radius: 0.4rem !important;
+    width: 100% !important;
+    transition: background 0.12s !important;
+    cursor: pointer !important;
+}
+div[data-testid="stSidebar"] div[data-testid="stButton"] button:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: inherit !important;
+}
+div[data-testid="stSidebar"] div[data-testid="stButton"] button:focus {
+    box-shadow: none !important;
+    outline: none !important;
+}
+div[data-testid="stSidebar"] div[data-testid="stButton"] {
+    margin-bottom: 0 !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # ── Cached loaders ────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -446,10 +478,43 @@ st.sidebar.title("🏛️ Wer stimmt wie?")
 check_api_key()
 
 _pages = ["Home", "Fraktion", "Mitglied", "Thema", "Geschäftssuche"]
+
+# Handle query-param navigation (from HTML link clicks)
+_qp_nav = st.query_params.get("_nav")
+if _qp_nav and _qp_nav in _pages:
+    st.session_state["nav_radio"] = _qp_nav
+    del st.query_params["_nav"]
+
+# Handle in-app navigation (navigate_to_mp etc.)
 _nav = st.session_state.pop("_nav_page", None)
 if _nav and _nav in _pages:
     st.session_state["nav_radio"] = _nav
-page = st.sidebar.radio("Navigation", _pages, key="nav_radio", label_visibility="collapsed")
+
+if "nav_radio" not in st.session_state:
+    st.session_state["nav_radio"] = "Home"
+page = st.session_state["nav_radio"]
+
+# Render all nav items in one HTML block so Streamlit's per-element
+# spacing never applies and active/inactive items stay pixel-aligned.
+_nav_html = ["<div style='margin-top:6px'>"]
+for _p in _pages:
+    if _p == page:
+        _nav_html.append(
+            f'<div style="background:rgba(255,255,255,0.18);font-weight:700;'
+            f'padding:0.45rem 0.75rem 0.45rem 0.65rem;border-radius:0.4rem;'
+            f'margin:0 0 2px 0;font-size:1rem;line-height:1.6;'
+            f'border-left:3px solid #f63366;">{_p}</div>'
+        )
+    else:
+        _nav_html.append(
+            f'<a href="?_nav={_p}" style="display:block;padding:0.45rem 0.9rem;'
+            f'border-radius:0.4rem;margin:0 0 2px 0;font-size:1rem;line-height:1.6;'
+            f'color:inherit;text-decoration:none;" '
+            f'onmouseover="this.style.background=\'rgba(255,255,255,0.08)\'" '
+            f'onmouseout="this.style.background=\'none\'">{_p}</a>'
+        )
+_nav_html.append("</div>")
+st.sidebar.markdown("".join(_nav_html), unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════════════════════
 # 1. HOME
@@ -1036,7 +1101,7 @@ elif page == "Mitglied":
             xgap=1, ygap=0,
             texttemplate="",
             customdata=[[lb] * len(_frac_cols_present) for lb in _ylabels],
-            hovertemplate="<b>%{customdata[0]}</b><br>%{x}: %{z:.0f}%<extra></extra>",
+            hovertemplate="<b>%{customdata}</b><br>%{x}: %{z:.0f}%<extra></extra>",
         ), row=1, col=2)
 
         _shared_yaxis = dict(
@@ -1431,7 +1496,7 @@ elif page == "Fraktion":
             labels={"color": "%", "x": "Andere Fraktion", "y": "Mitglied"},
         )
         fig3.update_layout(
-            height=max(300, len(heatmap_df) * 32),
+            height=len(heatmap_df) * 36 + 60,
             yaxis=dict(dtick=1),
         )
         st.plotly_chart(fig3, use_container_width=True)
