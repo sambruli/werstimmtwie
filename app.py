@@ -541,7 +541,7 @@ if page == "Home":
         _fig_pca = px.scatter(
             _pca_plot,
             x="PC1", y="Abweichung (%)",
-            color="FractionAbbr",
+            color="Fraktion",
             color_discrete_map=frac_color_map(),
             hover_name="Name",
             hover_data={
@@ -552,7 +552,7 @@ if page == "Home":
                 "Abweichung (%)": True,
                 "PC1": False,
             },
-            category_orders={"FractionAbbr": FRAC_ORDER},
+            category_orders={"Fraktion": frac_order_labels()},
             labels={"CouncilAbbr": "Rat", "CantonAbbr": "Kanton",
                     "Abweichung (%)": "Abweichung vom Fraktionskurs (%)"},
         )
