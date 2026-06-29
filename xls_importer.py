@@ -67,7 +67,7 @@ def _parse_date(s):
         return str(s)[:10]
 
 def _biz_short(biz_num):
-    """Format 8-digit business number as 'YYYY.NNN'."""
+    """Format 8-digit business number as 'YY.NNN' matching the NR API format."""
     if not biz_num:
         return ""
     try:
@@ -75,7 +75,8 @@ def _biz_short(biz_num):
     except (ValueError, TypeError):
         return str(biz_num)[:20]
     if len(s) == 8:
-        return f"{s[:4]}.{s[4:]}"
+        # e.g. "20230456" → "23.456" (2-digit year, no leading zeros in number)
+        return f"{s[2:4]}.{int(s[4:])}"
     return s
 
 # ── Session matching ──────────────────────────────────────────────────────────
