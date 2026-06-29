@@ -484,7 +484,7 @@ if page == "Home":
 # ════════════════════════════════════════════════════════════════════════════
 
 elif page == "Thema":
-    st.title("Suche nach Thema")
+    st.title("Themen")
     st.markdown(
         "Wähle ein politisches Thema und sieh, wie geschlossen die Fraktionen abstimmten "
         "und welche Parlamentsmitglieder am häufigsten von der eigenen Fraktionslinie abwichen. "
@@ -784,7 +784,7 @@ elif page == "Mitglied":
     if members.empty:
         no_data_stop()
 
-    st.title("Suche nach Mitgliedern des Parlaments")
+    st.title("Mitglieder des Parlaments")
 
     # ── Search controls ───────────────────────────────────────────────────
     target_pn = st.session_state.pop("_nav_pn", None)
@@ -839,38 +839,6 @@ elif page == "Mitglied":
     )
     pn = _mp_pns[_mp_labels.index(_sel_label)]
 
-    # ── Deviation strip chart ─────────────────────────────────────────────
-    st.markdown("---")
-    with st.spinner("Lade Übersicht…"):
-        _dev_mp = get_all_mp_deviations()
-
-    if not _dev_mp.empty:
-        _strip_mp = _dev_mp[_dev_mp["FractionAbbr"].isin(FRAC_ORDER)].copy()
-        _strip_mp["Fraktion"] = _strip_mp["FractionAbbr"].apply(frac_label)
-        _fig_mp_strip = px.strip(
-            _strip_mp, x="Abweichung (%)", y="Fraktion",
-            color="FractionAbbr", color_discrete_map=frac_color_map(),
-            hover_name="Name",
-            hover_data={"FractionAbbr": False, "Fraktion": True,
-                        "CouncilAbbr": True, "CantonAbbr": True,
-                        "Total": True, "Deviated": True, "Abweichung (%)": True},
-            category_orders={"Fraktion": list(reversed(frac_order_labels()))},
-            stripmode="overlay",
-            labels={"CouncilAbbr": "Rat", "CantonAbbr": "Kanton",
-                    "Total": "Abstimmungen", "Deviated": "Abweichungen"},
-        )
-        _fig_mp_strip.update_traces(
-            marker=dict(size=8, opacity=0.7, line=dict(width=0.5, color="white")),
-            jitter=0.6,
-        )
-        _fig_mp_strip.update_layout(
-            showlegend=False,
-            xaxis=dict(title="Abweichung vom Fraktionskurs (%)",
-                       range=[-1, _strip_mp["Abweichung (%)"].max() + 2]),
-            yaxis_title="", height=360, margin=dict(l=10, r=10, t=20, b=10),
-        )
-        st.plotly_chart(_fig_mp_strip, use_container_width=True)
-
     # ── MP × Fraktion alignment heatmap ──────────────────────────────────
     with st.spinner("Berechne Übereinstimmungsmatrix…"):
         _aln = get_mp_fraction_alignment()
@@ -886,15 +854,10 @@ elif page == "Mitglied":
         _z = _aln_sorted[_frac_cols_present].values
         _ylabels = _aln_sorted["Name"].tolist()
         _xlabels = [frac_label(f) for f in _frac_cols_present]
-
         _n_mps = len(_aln_sorted)
-        _height = max(1000, _n_mps * 5)
-        _mt, _mb = 50, 10
 
-        # Paper-coordinate helpers for separator lines between faction groups
-        _pt = (_height - _mt) / _height
-        _pb = _mb / _height
-        _row_h = (_pt - _pb) / _n_mps
+        # Use integer y-axis so separator lines live in data coords and zoom correctly
+        _yints = list(range(_n_mps))
 
         # Discrete colorscale for the faction strip
         _frac_to_idx = {f: i for i, f in enumerate(FRAC_ORDER)}
@@ -907,22 +870,22 @@ elif page == "Mitglied":
             _frac_cs += [[_vlo, FRAC_COLORS[_f]], [_vhi, FRAC_COLORS[_f]]]
         _frac_cs.append([1.0, FRAC_COLORS[FRAC_ORDER[-1]]])
 
-        # White separator lines between faction groups
+        # Separator lines at exact half-integer positions between faction groups
         _shapes = []
         _r = 0
         for _frac in FRAC_ORDER:
-            _nf = (_aln_sorted["FractionAbbr"] == _frac).sum()
+            _nf = int((_aln_sorted["FractionAbbr"] == _frac).sum())
             if _nf == 0:
                 continue
             if _r > 0:
-                _yline = _pt - _r * _row_h
                 _shapes.append(dict(
                     type="line", xref="paper", x0=0, x1=1,
-                    yref="paper", y0=_yline, y1=_yline,
+                    yref="y", y0=_r - 0.5, y1=_r - 0.5,
                     line=dict(color="white", width=2), layer="above",
                 ))
             _r += _nf
 
+        _height = _n_mps * 8 + 60   # 8 px per row in the plot area
         _fig_aln = make_subplots(
             rows=1, cols=2,
             column_widths=[0.025, 0.975],
@@ -931,27 +894,36 @@ elif page == "Mitglied":
         )
         # Left strip: faction colour
         _fig_aln.add_trace(go.Heatmap(
-            z=_frac_z, x=[""], y=_ylabels,
+            z=_frac_z, x=[""], y=_yints,
             colorscale=_frac_cs, zmin=0, zmax=_n_fracs,
-            showscale=False, ygap=0.3,
-            hovertemplate="<b>%{y}</b><extra></extra>",
+            showscale=False, ygap=0,
+            hovertemplate="<b>%{text}</b><extra></extra>",
+            text=[[lb] for lb in _ylabels],
         ), row=1, col=1)
         # Right panel: alignment matrix
         _fig_aln.add_trace(go.Heatmap(
-            z=_z, x=_xlabels, y=_ylabels,
+            z=_z, x=_xlabels, y=_yints,
             colorscale="RdYlGn", zmin=30, zmax=100,
             showscale=True,
             colorbar=dict(title="Übereinstimmung (%)", len=0.5, thickness=12),
-            xgap=1, ygap=0.3,
-            hovertemplate="<b>%{y}</b><br>%{x}: %{z:.0f}%<extra></extra>",
+            xgap=1, ygap=0,
+            hovertemplate="<b>%{text}</b><br>%{x}: %{z:.0f}%<extra></extra>",
+            text=[[lb] * len(_frac_cols_present) for lb in _ylabels],
         ), row=1, col=2)
 
+        _shared_yaxis = dict(
+            autorange="reversed",
+            tickmode="array",
+            tickvals=_yints,
+            ticktext=_ylabels,
+            tickfont=dict(size=9),
+        )
         _fig_aln.update_layout(
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            yaxis=dict(autorange="reversed", tickfont=dict(size=9), dtick=1),
+            yaxis=_shared_yaxis,
             xaxis=dict(showticklabels=False),
             xaxis2=dict(side="top", tickfont=dict(size=12)),
-            margin=dict(l=130, r=90, t=_mt, b=_mb),
+            margin=dict(l=130, r=90, t=50, b=10),
             height=_height,
             shapes=_shapes,
         )
@@ -1211,6 +1183,39 @@ elif page == "Fraktion":
                 "Anteil der Abstimmungen, bei denen alle anwesenden Fraktionsmitglieder gleich stimmten. "
                 "Je höher, desto disziplinierter die Fraktion."
             )
+
+        # ── Deviation strip chart ─────────────────────────────────────────
+        with st.spinner("Lade Abweichungsübersicht…"):
+            _dev_mp = get_all_mp_deviations()
+
+        if not _dev_mp.empty:
+            _strip_mp = _dev_mp[_dev_mp["FractionAbbr"].isin(FRAC_ORDER)].copy()
+            _strip_mp["Fraktion"] = _strip_mp["FractionAbbr"].apply(frac_label)
+            _fig_mp_strip = px.strip(
+                _strip_mp, x="Abweichung (%)", y="Fraktion",
+                color="FractionAbbr", color_discrete_map=frac_color_map(),
+                hover_name="Name",
+                hover_data={"FractionAbbr": False, "Fraktion": True,
+                            "CouncilAbbr": True, "CantonAbbr": True,
+                            "Total": True, "Deviated": True, "Abweichung (%)": True},
+                category_orders={"Fraktion": list(reversed(frac_order_labels()))},
+                stripmode="overlay",
+                labels={"CouncilAbbr": "Rat", "CantonAbbr": "Kanton",
+                        "Total": "Abstimmungen", "Deviated": "Abweichungen"},
+            )
+            _fig_mp_strip.update_traces(
+                marker=dict(size=8, opacity=0.7, line=dict(width=0.5, color="white")),
+                jitter=0.6,
+            )
+            _fig_mp_strip.update_layout(
+                showlegend=False,
+                xaxis=dict(title="Abweichung vom Fraktionskurs (%)",
+                           range=[-1, _strip_mp["Abweichung (%)"].max() + 2]),
+                yaxis_title="", height=360, margin=dict(l=10, r=10, t=20, b=10),
+            )
+            st.plotly_chart(_fig_mp_strip, use_container_width=True)
+            st.caption("Jeder Punkt ist ein Parlamentsmitglied. Hover für Name und Details.")
+
         st.stop()
 
     with st.spinner("Berechne Kohäsion…"):
