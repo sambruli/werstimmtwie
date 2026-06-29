@@ -4,6 +4,7 @@ Run: streamlit run app.py
 """
 
 import os
+from urllib.parse import urlencode
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -513,11 +514,19 @@ def mp_selector(label, key, members_df, target_pn=None):
     return pns[labels.index(choice)]
 
 def navigate_to_mp(pn: int):
-    st.session_state["_nav_page"] = "Mitglied"
+    st.query_params["page"] = "Mitglied"
+    st.query_params["mp"]   = str(pn)
+    if "q" in st.query_params:
+        del st.query_params["q"]
+    st.session_state["nav_radio"] = "Mitglied"
     st.session_state["_nav_pn"]   = int(pn)
     st.rerun()
 
 def navigate_to_geschaeft(biz_short: str):
+    st.query_params["page"] = "Geschäft"
+    st.query_params["q"]    = str(biz_short)
+    if "mp" in st.query_params:
+        del st.query_params["mp"]
     st.session_state["_geschaeft_goto"] = str(biz_short)
     st.session_state["nav_radio"]       = "Geschäft"
     st.rerun()
@@ -540,8 +549,13 @@ def _mp_click_nav(ev, key_suffix, members_df):
         f"**{r['FirstName']} {r['LastName']}** · "
         f"{frac_label(r['FractionAbbr'])} · {r['CouncilAbbr']} · {r['CantonAbbr']}"
     )
-    if _c2.button("→ Mitglied", key=f"_nav_{key_suffix}"):
-        navigate_to_mp(pn)
+    _href_mp = "?" + urlencode({"page": "Mitglied", "mp": str(pn)})
+    _c2.markdown(
+        f'<a href="{_href_mp}" target="_self" style="display:inline-block;padding:0.35rem 0.7rem;'
+        f'background:#f63366;color:white;border-radius:0.3rem;text-decoration:none;'
+        f'font-size:0.875rem;font-weight:500;">→ Mitglied</a>',
+        unsafe_allow_html=True,
+    )
     return True
 
 def _biz_click_nav(ev, key_suffix):
@@ -557,8 +571,13 @@ def _biz_click_nav(ev, key_suffix):
         return False
     _c1, _c2 = st.columns([5, 1])
     _c1.info(f"Geschäft **{biz_short}**" + (f" — {str(title)[:80]}" if title else ""))
-    if _c2.button("→ Geschäft", key=f"_nav_{key_suffix}"):
-        navigate_to_geschaeft(biz_short)
+    _href_biz = "?" + urlencode({"page": "Geschäft", "q": str(biz_short)})
+    _c2.markdown(
+        f'<a href="{_href_biz}" target="_self" style="display:inline-block;padding:0.35rem 0.7rem;'
+        f'background:#f63366;color:white;border-radius:0.3rem;text-decoration:none;'
+        f'font-size:0.875rem;font-weight:500;">→ Geschäft</a>',
+        unsafe_allow_html=True,
+    )
     return True
 
 def ai_button(key, fn, *args):
@@ -570,6 +589,19 @@ def ai_button(key, fn, *args):
                 st.error(str(e))
             except Exception as e:
                 st.error(f"Fehler: {e}")
+
+@st.cache_data(show_spinner=False)
+def _gesamtbild(chart_id: str, data_summary: str) -> list[str]:
+    try:
+        return summarizer.summarize_chart_overview(chart_id, data_summary)
+    except Exception:
+        return []
+
+def _show_gesamtbild(chart_id: str, data_summary: str):
+    with st.spinner("Gesamtbild wird generiert…"):
+        _bullets = _gesamtbild(chart_id, data_summary)
+    if _bullets:
+        st.info("**Gesamtbild**\n\n" + "\n\n".join(f"• {b}" for b in _bullets))
 
 def check_api_key():
     key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -642,35 +674,40 @@ check_api_key()
 
 _pages = ["Home", "Fraktion", "Mitglied", "Thema", "Geschäft"]
 
-# Handle query-param navigation (from HTML link clicks)
-_qp_nav = st.query_params.get("_nav")
-if _qp_nav and _qp_nav in _pages:
-    st.session_state["nav_radio"] = _qp_nav
-    del st.query_params["_nav"]
-
-# Handle in-app navigation (navigate_to_mp etc.)
-_nav = st.session_state.pop("_nav_page", None)
-if _nav and _nav in _pages:
-    st.session_state["nav_radio"] = _nav
+# URL is source of truth for page and detail state (survives browser reload/back)
+_page_from_url = st.query_params.get("page", "")
+if _page_from_url in _pages:
+    st.session_state["nav_radio"] = _page_from_url
+    _mp_param = st.query_params.get("mp")
+    if _mp_param:
+        try:
+            st.session_state["_nav_pn"] = int(_mp_param)
+        except (ValueError, TypeError):
+            pass
+    _q_param = st.query_params.get("q")
+    if _q_param:
+        st.session_state["_geschaeft_goto"] = _q_param
 
 if "nav_radio" not in st.session_state:
     st.session_state["nav_radio"] = "Home"
 page = st.session_state["nav_radio"]
 
-# Render all nav items in one HTML block so Streamlit's per-element
-# spacing never applies and active/inactive items stay pixel-aligned.
+# All nav items are <a> links so the browser adds history entries.
+# Clicking the active item navigates to ?page=X (no detail params) → resets to landing.
 _nav_html = ["<div style='margin-top:6px'>"]
 for _p in _pages:
+    _href = "?" + urlencode({"page": _p})
     if _p == page:
         _nav_html.append(
-            f'<div style="background:rgba(255,255,255,0.18);font-weight:700;'
-            f'padding:0.45rem 0.75rem 0.45rem 0.65rem;border-radius:0.4rem;'
+            f'<a href="{_href}" style="display:block;padding:0.45rem 0.75rem 0.45rem 0.65rem;'
+            f'background:rgba(255,255,255,0.18);font-weight:700;'
+            f'border-left:3px solid #f63366;border-radius:0.4rem;'
             f'margin:0 0 2px 0;font-size:1rem;line-height:1.6;'
-            f'border-left:3px solid #f63366;">{_p}</div>'
+            f'color:inherit;text-decoration:none;">{_p}</a>'
         )
     else:
         _nav_html.append(
-            f'<a href="?_nav={_p}" style="display:block;padding:0.45rem 0.9rem;'
+            f'<a href="{_href}" style="display:block;padding:0.45rem 0.9rem;'
             f'border-radius:0.4rem;margin:0 0 2px 0;font-size:1rem;line-height:1.6;'
             f'color:inherit;text-decoration:none;" '
             f'onmouseover="this.style.background=\'rgba(255,255,255,0.08)\'" '
@@ -755,6 +792,24 @@ if page == "Home":
             "Punkt anklicken für Direktnavigation."
         )
         _mp_click_nav(_ev_pca, "home_pca", get_members())
+
+        _pca_grp = _pca_plot.groupby("FractionAbbr")[["PC1", "Abweichung (%)"]].mean().round(2)
+        _pca_cnt = _pca_plot["FractionAbbr"].value_counts()
+        _pca_data_str = (
+            f"Politische Landkarte: {len(_pca_plot)} Parlamentarier:innen\n"
+            f"X-Achse: politische Ausrichtung (links-rechts aus Abstimmungsverhalten)\n"
+            f"Y-Achse: Abweichungsrate vom Fraktionskurs (%)\n\n"
+            "Fraktions-Schwerpunkte (Ø X-Position, Ø Abweichung, Anzahl MPs):\n"
+            + "\n".join(
+                f"  {f}: X={_pca_grp.at[f,'PC1']:.2f}, "
+                f"Abweichung={_pca_grp.at[f,'Abweichung (%)']:.1f}%, N={_pca_cnt.get(f,0)}"
+                for f in _pca_grp.index if f in _pca_cnt
+            )
+            + f"\n\nGesamter X-Bereich: {_pca_plot['PC1'].min():.2f} bis {_pca_plot['PC1'].max():.2f}"
+            + f"\nAbweichungsbereich: {_pca_plot['Abweichung (%)'].min():.1f}% bis "
+            f"{_pca_plot['Abweichung (%)'].max():.1f}%"
+        )
+        _show_gesamtbild("Politische Landkarte (PCA)", _pca_data_str)
 
     st.markdown("---")
     st.subheader("So verwendest du die App")
@@ -1054,6 +1109,27 @@ elif page == "Geschäft":
             )
             _biz_click_nav(_ev_pol, "pol_scatter")
 
+            _n_pol = len(_pol_show)
+            _both_high = (_pol_show["PctDevLeft"] > 15) & (_pol_show["PctDevRight"] > 15)
+            _pol_str = (
+                f"Lagerwechsel-Scatter: {_n_pol} polarisierte Abstimmungen\n\n"
+                f"Linksdrift (% Mitte/FDP/SVP stimmen mit G/SP):\n"
+                f"  Ø={_pol_show['PctDevLeft'].mean():.1f}%, "
+                f"max={_pol_show['PctDevLeft'].max():.1f}%\n"
+                f"Rechtsdrift (% G/SP/Mitte stimmen mit FDP/SVP):\n"
+                f"  Ø={_pol_show['PctDevRight'].mean():.1f}%, "
+                f"max={_pol_show['PctDevRight'].max():.1f}%\n"
+                f"Abstimmungen mit starkem beideitigem Lagerwechsel (>15% in beide Richtungen): "
+                f"{_both_high.sum()} ({_both_high.mean()*100:.0f}%)\n"
+                + (
+                    f"\nTop Linksdrift: {str(_pol_show.loc[_pol_show['PctDevLeft'].idxmax(),'BizTitle'])[:60]} "
+                    f"({_pol_show['PctDevLeft'].max():.1f}%)\n"
+                    f"Top Rechtsdrift: {str(_pol_show.loc[_pol_show['PctDevRight'].idxmax(),'BizTitle'])[:60]} "
+                    f"({_pol_show['PctDevRight'].max():.1f}%)"
+                )
+            )
+            _show_gesamtbild("Lagerwechsel", _pol_str)
+
         # ── Landing: direction × magnitude scatter ────────────────────────
         st.markdown("---")
         st.subheader("Richtung & Stärke der Abweichungen")
@@ -1186,6 +1262,26 @@ elif page == "Geschäft":
                 "Punkt anklicken für Direktnavigation."
             )
             _biz_click_nav(_ev_dm, "dm_scatter")
+
+            _dm_grp = _dm_show.groupby("Koalitionstyp").agg(
+                N=("NetGravity", "count"),
+                AvgDir=("NetGravity", "mean"),
+                AvgDev=("DeviationPct", "mean"),
+            ).round(2)
+            _dm_str = (
+                f"Richtung & Stärke der Abweichungen: {len(_dm_show)} polarisierte Abstimmungen\n\n"
+                "Koalitionstyp (N, Ø Richtung, Ø Abweichungsrate):\n"
+                + "\n".join(
+                    f"  {ct}: N={int(row['N'])}, "
+                    f"Ø Richtung={row['AvgDir']:.2f}, "
+                    f"Ø Abweichung={row['AvgDev']:.1f}%"
+                    for ct, row in _dm_grp.iterrows()
+                )
+                + f"\n\nStärkster Linkszug: {_dm_show['NetGravity'].min():.2f}\n"
+                + f"Stärkster Rechtszug: {_dm_show['NetGravity'].max():.2f}\n"
+                + f"Höchste interne Abweichungsrate: {_dm_show['DeviationPct'].max():.1f}%"
+            )
+            _show_gesamtbild("Richtung & Stärke der Abweichungen", _dm_str)
         st.stop()
 
     with st.spinner("Suche…"):
@@ -1760,6 +1856,15 @@ elif page == "Fraktion":
                 "Anteil der Abstimmungen, bei denen alle anwesenden Fraktionsmitglieder gleich stimmten. "
                 "Je höher, desto disziplinierter die Fraktion."
             )
+            _coh_str = (
+                "Fraktionskohäsion (% der Abstimmungen mit vollständiger Einigkeit):\n"
+                + "\n".join(
+                    f"  {row['FraktionLabel']}: {row['Kohäsion (%)']:.1f}%"
+                    f" ({int(row['Mitglieder'])} Mitglieder)"
+                    for _, row in _coh_plot.sort_values("Kohäsion (%)", ascending=False).iterrows()
+                )
+            )
+            _show_gesamtbild("Fraktionskohäsion", _coh_str)
 
         # ── Deviation strip chart ─────────────────────────────────────────
         with st.spinner("Lade Abweichungsübersicht…"):
@@ -1797,6 +1902,22 @@ elif page == "Fraktion":
             )
             st.caption("Jeder Punkt ist ein Parlamentsmitglied. Punkt anklicken für Direktnavigation.")
             _mp_click_nav(_ev_strip, "frac_strip", members)
+
+            _strip_grp = _strip_mp.groupby("Fraktion")["Abweichung (%)"].agg(
+                ["mean", "max", "std"]
+            ).round(1)
+            _max_row = _strip_mp.loc[_strip_mp["Abweichung (%)"].idxmax()]
+            _strip_str = (
+                f"Individuelle Abweichungsraten: {len(_strip_mp)} Parlamentarier:innen\n\n"
+                "Ø Abweichung / max / Streuung pro Fraktion:\n"
+                + "\n".join(
+                    f"  {f}: Ø={row['mean']:.1f}%, max={row['max']:.1f}%, σ={row['std']:.1f}%"
+                    for f, row in _strip_grp.iterrows()
+                )
+                + f"\n\nStärkster Abweichler: {_max_row['Name']} ({_max_row['Fraktion']}): "
+                f"{_max_row['Abweichung (%)']:.1f}%"
+            )
+            _show_gesamtbild("Abweichungsraten aller MPs (Strip)", _strip_str)
 
         st.stop()
 
