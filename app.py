@@ -876,6 +876,7 @@ elif page == "Mitglied":
         _aln = get_mp_fraction_alignment()
 
     if not _aln.empty:
+        from plotly.subplots import make_subplots
         _aln_plot = _aln[_aln["FractionAbbr"].isin(FRAC_ORDER)].copy()
         _aln_sorted = pd.concat([
             _aln_plot[_aln_plot["FractionAbbr"] == f].sort_values(f, ascending=False)
@@ -885,25 +886,80 @@ elif page == "Mitglied":
         _z = _aln_sorted[_frac_cols_present].values
         _ylabels = _aln_sorted["Name"].tolist()
         _xlabels = [frac_label(f) for f in _frac_cols_present]
-        _fig_aln = go.Figure(go.Heatmap(
+
+        _n_mps = len(_aln_sorted)
+        _height = max(1000, _n_mps * 5)
+        _mt, _mb = 50, 10
+
+        # Paper-coordinate helpers for separator lines between faction groups
+        _pt = (_height - _mt) / _height
+        _pb = _mb / _height
+        _row_h = (_pt - _pb) / _n_mps
+
+        # Discrete colorscale for the faction strip
+        _frac_to_idx = {f: i for i, f in enumerate(FRAC_ORDER)}
+        _frac_z = [[float(_frac_to_idx.get(f, 0))] for f in _aln_sorted["FractionAbbr"]]
+        _n_fracs = len(FRAC_ORDER)
+        _frac_cs = []
+        for _i, _f in enumerate(FRAC_ORDER):
+            _vlo = _i / _n_fracs
+            _vhi = min((_i + 0.99) / _n_fracs, 1.0)
+            _frac_cs += [[_vlo, FRAC_COLORS[_f]], [_vhi, FRAC_COLORS[_f]]]
+        _frac_cs.append([1.0, FRAC_COLORS[FRAC_ORDER[-1]]])
+
+        # White separator lines between faction groups
+        _shapes = []
+        _r = 0
+        for _frac in FRAC_ORDER:
+            _nf = (_aln_sorted["FractionAbbr"] == _frac).sum()
+            if _nf == 0:
+                continue
+            if _r > 0:
+                _yline = _pt - _r * _row_h
+                _shapes.append(dict(
+                    type="line", xref="paper", x0=0, x1=1,
+                    yref="paper", y0=_yline, y1=_yline,
+                    line=dict(color="white", width=2), layer="above",
+                ))
+            _r += _nf
+
+        _fig_aln = make_subplots(
+            rows=1, cols=2,
+            column_widths=[0.025, 0.975],
+            shared_yaxes=True,
+            horizontal_spacing=0.0,
+        )
+        # Left strip: faction colour
+        _fig_aln.add_trace(go.Heatmap(
+            z=_frac_z, x=[""], y=_ylabels,
+            colorscale=_frac_cs, zmin=0, zmax=_n_fracs,
+            showscale=False, ygap=0.3,
+            hovertemplate="<b>%{y}</b><extra></extra>",
+        ), row=1, col=1)
+        # Right panel: alignment matrix
+        _fig_aln.add_trace(go.Heatmap(
             z=_z, x=_xlabels, y=_ylabels,
             colorscale="RdYlGn", zmin=30, zmax=100,
-            hovertemplate="<b>%{y}</b><br>%{x}: %{z:.0f}%<extra></extra>",
             showscale=True,
-            colorbar=dict(title="Übereinstimmung (%)", len=0.6, thickness=12),
+            colorbar=dict(title="Übereinstimmung (%)", len=0.5, thickness=12),
             xgap=1, ygap=0.3,
-        ))
+            hovertemplate="<b>%{y}</b><br>%{x}: %{z:.0f}%<extra></extra>",
+        ), row=1, col=2)
+
         _fig_aln.update_layout(
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            xaxis=dict(side="top", tickfont=dict(size=12)),
             yaxis=dict(autorange="reversed", tickfont=dict(size=9), dtick=1),
-            margin=dict(l=120, r=60, t=40, b=10),
-            height=620,
+            xaxis=dict(showticklabels=False),
+            xaxis2=dict(side="top", tickfont=dict(size=12)),
+            margin=dict(l=130, r=90, t=_mt, b=_mb),
+            height=_height,
+            shapes=_shapes,
         )
         st.plotly_chart(_fig_aln, use_container_width=True)
         st.caption(
-            "Jede Zeile = ein Parlamentsmitglied, sortiert nach Fraktion und Übereinstimmung. "
-            "Grün = häufig mit dieser Fraktion gestimmt. Hover für genaue Werte."
+            "Jede Zeile = ein Parlamentsmitglied, sortiert nach Fraktion und Übereinstimmung mit der eigenen Fraktionsmehrheit. "
+            "Der farbige Streifen links zeigt die Fraktionszugehörigkeit (gleiche Farben wie in anderen Grafiken). "
+            "Grün = häufig mit dieser Fraktion gestimmt, Rot = selten. Hover für genaue Werte."
         )
 
     if pn is None:
