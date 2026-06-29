@@ -883,7 +883,7 @@ elif page == "Mitglied":
                 ))
             _r += _nf
 
-        _height = _n_mps * 8 + 90   # 8 px per row in the plot area (t=80, b=10)
+        _height = _n_mps * 14 + 90  # 14 px per row in the plot area (t=80, b=10)
         _fig_aln = make_subplots(
             rows=1, cols=2,
             column_widths=[0.025, 0.975],
@@ -1305,7 +1305,10 @@ elif page == "Fraktion":
             title=f"Abweichungsrichtung — {frac_label(frac)} (% Abweichungen aligned mit Fraktion X)",
             labels={"color": "%", "x": "Andere Fraktion", "y": "Mitglied"},
         )
-        fig3.update_layout(height=max(300, len(heatmap_df) * 28))
+        fig3.update_layout(
+            height=max(300, len(heatmap_df) * 32),
+            yaxis=dict(dtick=1),
+        )
         st.plotly_chart(fig3, use_container_width=True)
 
     # ── Kammernvergleich ──────────────────────────────────────────────────
