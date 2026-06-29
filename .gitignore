@@ -5,3 +5,4 @@ __pycache__/
 *.env
 swiss_parl.db
 check_size.py
+xls_downloads/
