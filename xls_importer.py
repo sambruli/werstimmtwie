@@ -49,7 +49,14 @@ _VOTE_MAP = {
 def _norm_vote(raw):
     if raw is None:
         return "—"
-    return _VOTE_MAP.get(str(raw).strip().lower(), str(raw))
+    s = str(raw).strip()
+    mapped = _VOTE_MAP.get(s.lower())
+    if mapped:
+        return mapped
+    # Catch "Entschuldigt gemäss Art. 57 Abs. 4" and similar variants
+    if s.lower().startswith("entschuldigt"):
+        return "Entschuldigt"
+    return s
 
 def _parse_date(s):
     if not s:
