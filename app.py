@@ -988,11 +988,12 @@ elif page == "Geschäft":
         no_data_stop()
 
     _goto = st.session_state.pop("_geschaeft_goto", None)
+    if _goto:
+        st.session_state["geschaeft_search"] = _goto
     keyword = st.text_input(
         "Suche nach Geschäftsnummer oder Stichwort",
         placeholder="z.B. 23.456  oder  CO2-Gesetz",
         key="geschaeft_search",
-        value=_goto or "",
     )
 
     if not keyword.strip():
