@@ -496,43 +496,40 @@ elif page == "Thema":
     if members.empty or all_votes.empty:
         no_data_stop()
 
-    # ── Option 3: Thema × Fraktion cohesion heatmap (welcome visual) ──────
-    with st.spinner("Lade Übersicht…"):
-        _coh_matrix = get_topic_fraction_cohesion()
-
-    if not _coh_matrix.empty:
-        _pivot = _coh_matrix.pivot(index="Thema", columns="Fraktion", values="Kohäsion (%)")
-        _col_order = [frac_label(f) for f in FRAC_ORDER if frac_label(f) in _pivot.columns]
-        _pivot = _pivot[_col_order]
-
-        _fig_hm = px.imshow(
-            _pivot,
-            color_continuous_scale="RdYlGn",
-            zmin=50, zmax=100,
-            text_auto=True,
-            aspect="auto",
-            labels=dict(color="Kohäsion (%)"),
-        )
-        _fig_hm.update_layout(
-            xaxis_title="",
-            yaxis_title="",
-            coloraxis_colorbar=dict(title="Kohäsion (%)"),
-            margin=dict(l=10, r=10, t=10, b=10),
-            height=420,
-        )
-        st.plotly_chart(_fig_hm, use_container_width=True)
-        st.caption(
-            "Fraktionskohäsion pro Thema: Grün = Fraktion stimmt geschlossen ab, "
-            "Rot = viele Abweichler. Klicke auf ein Feld zum Zoomen."
-        )
-
-    st.markdown("---")
-
     # ── Topic selector ────────────────────────────────────────────────────
     _topic_opts = ["— Thema auswählen —"] + list(TOPICS.keys())
     _topic_sel  = st.selectbox("🔍 Thema wählen", _topic_opts, key="thema_sel")
 
+    # ── Thema × Fraktion cohesion heatmap (only when none selected) ───────
     if _topic_sel == "— Thema auswählen —":
+        with st.spinner("Lade Übersicht…"):
+            _coh_matrix = get_topic_fraction_cohesion()
+
+        if not _coh_matrix.empty:
+            _pivot = _coh_matrix.pivot(index="Thema", columns="Fraktion", values="Kohäsion (%)")
+            _col_order = [frac_label(f) for f in FRAC_ORDER if frac_label(f) in _pivot.columns]
+            _pivot = _pivot[_col_order]
+
+            _fig_hm = px.imshow(
+                _pivot,
+                color_continuous_scale="RdYlGn",
+                zmin=50, zmax=100,
+                text_auto=True,
+                aspect="auto",
+                labels=dict(color="Kohäsion (%)"),
+            )
+            _fig_hm.update_layout(
+                xaxis_title="",
+                yaxis_title="",
+                coloraxis_colorbar=dict(title="Kohäsion (%)"),
+                margin=dict(l=10, r=10, t=10, b=10),
+                height=420,
+            )
+            st.plotly_chart(_fig_hm, use_container_width=True)
+            st.caption(
+                "Fraktionskohäsion pro Thema: Grün = Fraktion stimmt geschlossen ab, "
+                "Rot = viele Abweichler. Klicke auf ein Feld zum Zoomen."
+            )
         st.stop()
 
     topic = _topic_sel
