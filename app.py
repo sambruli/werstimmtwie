@@ -383,17 +383,17 @@ Bei knapper Mehrheit (z.B. 52%) ist eine abweichende Stimme weniger auffällig a
 st.sidebar.title("🏛️ Wer stimmt wie?")
 check_api_key()
 
-_pages = ["Übersicht", "Thema", "Geschäft", "Mitglied", "Fraktion"]
+_pages = ["Home", "Fraktion", "Mitglied", "Thema", "Geschäft"]
 _nav = st.session_state.pop("_nav_page", None)
 if _nav and _nav in _pages:
     st.session_state["nav_radio"] = _nav
 page = st.sidebar.radio("Navigation", _pages, key="nav_radio", label_visibility="collapsed")
 
 # ════════════════════════════════════════════════════════════════════════════
-# 1. ÜBERSICHT
+# 1. HOME
 # ════════════════════════════════════════════════════════════════════════════
 
-if page == "Übersicht":
+if page == "Home":
     st.title("Wer stimmt wie?")
     st.markdown("##### Abstimmungsanalyse Schweizer Parlamentarier:innen")
 
