@@ -83,7 +83,10 @@ st.set_page_config(
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_members():
-    return load_members()
+    m = load_members()
+    # The Swiss Parliament API's Voting entity contains only Nationalrat votes.
+    # The Ständerat does not publish individual electronic roll-call data via OData.
+    return m[m["CouncilAbbr"] == "NR"].copy() if "CouncilAbbr" in m.columns else m
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_all_votes():
@@ -207,6 +210,11 @@ def get_mp_pca():
         return pd.DataFrame()
 
     frac_cols = [f for f in FRAC_ORDER if f in aln.columns]
+    # Drop members with no valid L52 vote data (all fraction columns NaN)
+    aln = aln[~aln[frac_cols].isna().all(axis=1)].copy()
+    if aln.empty:
+        return pd.DataFrame()
+
     mat = aln[frac_cols].values.astype(float)
 
     col_means = np.nanmean(mat, axis=0)
@@ -229,6 +237,63 @@ def get_mp_pca():
     dev = get_all_mp_deviations()[["PersonNumber", "Abweichung (%)"]]
     result = result.merge(dev, on="PersonNumber", how="left")
     return result
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_vote_polarity_scatter():
+    """Per roll-call: % of right-bloc members voting with left, and vice versa."""
+    import numpy as np
+    av  = get_all_votes()
+    m   = get_members()
+    pos = get_positions()
+    if av.empty or pos.empty:
+        return pd.DataFrame()
+
+    left_fracs  = {"G", "S"}
+    right_fracs = {"V", "RL"}
+    active_dec  = {"Ja", "Nein", "Enthaltung"}
+
+    # Bloc majority positions per GroupKey
+    def _bloc_pos(fracs):
+        cols = [f for f in fracs if f in pos.columns]
+        if not cols:
+            return pd.Series(dtype=str)
+        return pos[cols].apply(
+            lambda row: row.dropna().mode().iloc[0] if row.notna().any() else None, axis=1
+        )
+
+    lpos = _bloc_pos(left_fracs)
+    rpos = _bloc_pos(right_fracs)
+
+    # Only polarising votes: left and right blocs disagree
+    polar_gks = set(pos.index[lpos.notna() & rpos.notna() & (lpos != rpos)])
+
+    active = av[av["DecisionNorm"].isin(active_dec) & av["GroupKey"].isin(polar_gks)].copy()
+    active = active.merge(m[["PersonNumber", "FractionAbbr"]], on="PersonNumber", how="inner")
+    active["LeftPos"]  = active["GroupKey"].map(lpos)
+    active["RightPos"] = active["GroupKey"].map(rpos)
+
+    # DevLeft: right-bloc member voted with left-bloc majority
+    active["DevLeft"]    = (active["FractionAbbr"].isin(right_fracs) &
+                            (active["DecisionNorm"] == active["LeftPos"])).astype(int)
+    active["IsRight"]    = active["FractionAbbr"].isin(right_fracs).astype(int)
+    # DevRight: left-bloc member voted with right-bloc majority
+    active["DevRight"]   = (active["FractionAbbr"].isin(left_fracs) &
+                            (active["DecisionNorm"] == active["RightPos"])).astype(int)
+    active["IsLeft"]     = active["FractionAbbr"].isin(left_fracs).astype(int)
+
+    agg = active.groupby("GroupKey").agg(
+        DevLeft=("DevLeft", "sum"),
+        TotalRight=("IsRight", "sum"),
+        DevRight=("DevRight", "sum"),
+        TotalLeft=("IsLeft", "sum"),
+    ).reset_index()
+
+    agg["PctDevLeft"]  = (agg["DevLeft"]  / agg["TotalRight"].clip(lower=1) * 100).round(1)
+    agg["PctDevRight"] = (agg["DevRight"] / agg["TotalLeft"].clip(lower=1)  * 100).round(1)
+
+    meta = (av[["GroupKey", "BizShort", "BizTitle", "Subject", "MeetingDate"]]
+            .drop_duplicates("GroupKey"))
+    return agg.merge(meta, on="GroupKey", how="left")
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_sunburst_data():
@@ -383,7 +448,7 @@ Bei knapper Mehrheit (z.B. 52%) ist eine abweichende Stimme weniger auffällig a
 st.sidebar.title("🏛️ Wer stimmt wie?")
 check_api_key()
 
-_pages = ["Home", "Fraktion", "Mitglied", "Thema", "Geschäft"]
+_pages = ["Home", "Fraktion", "Mitglied", "Thema", "Geschäftssuche"]
 _nav = st.session_state.pop("_nav_page", None)
 if _nav and _nav in _pages:
     st.session_state["nav_radio"] = _nav
@@ -398,10 +463,16 @@ if page == "Home":
     st.markdown("##### Abstimmungsanalyse Schweizer Parlamentarier:innen")
 
     st.markdown(
-        "Diese App analysiert das Abstimmungsverhalten aller Mitglieder des Schweizer Parlaments "
-        "(National- und Ständerat, Legislatur 52 ab Dezember 2023). "
+        "Diese App analysiert das Abstimmungsverhalten aller Mitglieder des **Nationalrats** "
+        "(Legislatur 52, ab Dezember 2023). "
         "Im Zentrum steht die Frage: Wer weicht wie oft von der Fraktionslinie ab — "
         "bei welchen Themen, in welche Richtung, und im Vergleich zu anderen Fraktionen?"
+    )
+    st.info(
+        "**Nur Nationalratsdaten:** Das Schweizer Parlament veröffentlicht keine elektronischen "
+        "Einzelabstimmungsdaten für den Ständerat. Die 46 Mitglieder des Ständerats stimmen "
+        "grösstenteils per Handerheben ab — diese Daten sind nicht maschinenlesbar verfügbar.",
+        icon="ℹ️",
     )
 
     # ── PCA political compass ─────────────────────────────────────────────
@@ -447,11 +518,18 @@ if page == "Home":
         )
         st.plotly_chart(_fig_pca, use_container_width=True)
         st.caption(
-            "Jeder Punkt ist ein Parlamentsmitglied. X-Achse: politische Position anhand des "
-            "tatsächlichen Abstimmungsverhaltens — ein SVP-Mitglied, das häufig gegen links abweicht, "
-            "wird links von anderen SVP-Mitgliedern dargestellt. Y-Achse: Abweichungsrate vom "
-            "Fraktionskurs — ein Mitglied, das häufiger von der eigenen Fraktion abweicht, "
-            "erscheint weiter oben. Hover für Name und Details."
+            "Jeder Punkt ist ein Parlamentsmitglied. "
+            "X-Achse (horizontale Position): politische Ausrichtung, berechnet aus dem tatsächlichen "
+            "Abstimmungsverhalten gegenüber allen sechs Fraktionen — also wie oft jemand mit den Grünen, "
+            "der SP, der GLP, der Mitte, der FDP und der SVP übereinstimmt. "
+            "Diese sechs Prozentwerte (dieselben wie in der Heatmap unter «Mitglied») werden per "
+            "Hauptkomponentenanalyse auf eine Achse verdichtet: Links = höhere Übereinstimmung mit "
+            "linken Fraktionen, rechts = höhere Übereinstimmung mit rechten. "
+            "Ein SVP-Mitglied, das weiter links erscheint als andere SVP-Mitglieder, stimmt "
+            "messbar öfter mit linken Fraktionen überein als seine Fraktionskolleg:innen. "
+            "Y-Achse (vertikale Position): Abweichungsrate vom Fraktionskurs — wie oft jemand "
+            "anders stimmt als die Mehrheit der eigenen Fraktion. "
+            "Hover für Name und Details."
         )
 
     st.markdown("---")
@@ -612,8 +690,8 @@ elif page == "Thema":
 # 3. GESCHÄFT
 # ════════════════════════════════════════════════════════════════════════════
 
-elif page == "Geschäft":
-    st.title("Geschäft-Suche")
+elif page == "Geschäftssuche":
+    st.title("Geschäftssuche")
     members   = get_members()
     all_votes = get_all_votes()
     if members.empty or all_votes.empty:
@@ -626,7 +704,49 @@ elif page == "Geschäft":
     )
 
     if not keyword.strip():
-        st.info("Gib eine Geschäftsnummer (z.B. 24.012) oder ein Stichwort ein.")
+        # ── Landing: polarity scatter ─────────────────────────────────────
+        with st.spinner("Berechne Abstimmungspolarität…"):
+            _pol = get_vote_polarity_scatter()
+        if not _pol.empty:
+            _fig_pol = px.scatter(
+                _pol,
+                x="PctDevLeft",
+                y="PctDevRight",
+                hover_name="BizShort",
+                hover_data={
+                    "BizTitle": True,
+                    "Subject": True,
+                    "MeetingDate": True,
+                    "PctDevLeft": ":.1f",
+                    "PctDevRight": ":.1f",
+                },
+                labels={
+                    "PctDevLeft":  "Abweichung nach links (% der SVP/FDP-Mitglieder, die mit links stimmten)",
+                    "PctDevRight": "Abweichung nach rechts (% der Grünen/SP-Mitglieder, die mit rechts stimmten)",
+                    "BizTitle": "Titel",
+                    "Subject": "Frage",
+                    "MeetingDate": "Datum",
+                },
+                opacity=0.55,
+                color_discrete_sequence=["#5c7caa"],
+                height=460,
+            )
+            _fig_pol.update_traces(marker=dict(size=5))
+            _fig_pol.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                margin=dict(l=20, r=20, t=30, b=20),
+                xaxis=dict(showgrid=True, zeroline=True, zerolinewidth=1, zerolinecolor="#ccc"),
+                yaxis=dict(showgrid=True, zeroline=True, zerolinewidth=1, zerolinecolor="#ccc"),
+            )
+            st.plotly_chart(_fig_pol, use_container_width=True)
+            st.caption(
+                "Jeder Punkt ist eine Abstimmung. X-Achse: Anteil der SVP/FDP-Mitglieder, "
+                "die mit der linken Fraktionsmehrheit (Grüne/SP) stimmten — je weiter rechts, "
+                "desto stärker die Linksbewegung im rechten Lager. Y-Achse: Anteil der "
+                "Grünen/SP-Mitglieder, die mit der rechten Fraktionsmehrheit (SVP/FDP) stimmten. "
+                "Abstimmungen oben rechts zeichnen sich durch hohe Abweichung in beide Richtungen aus."
+            )
         st.stop()
 
     with st.spinner("Suche…"):
@@ -883,7 +1003,23 @@ elif page == "Mitglied":
                 ))
             _r += _nf
 
-        _height = _n_mps * 14 + 90  # 14 px per row in the plot area (t=80, b=10)
+        _height = _n_mps * 14 + 60  # 14 px per row + 50 top margin + 10 bottom
+
+        # Colour legend rendered as HTML above the chart (Plotly colorbar y-coords
+        # proved unreliable in make_subplots context across Plotly 6 / Streamlit)
+        st.markdown(
+            "<div style='display:flex;align-items:center;gap:8px;"
+            "margin-left:138px;margin-bottom:4px;'>"
+            "<span style='font-size:11px;white-space:nowrap;'>30%</span>"
+            "<div style='background:linear-gradient(to right,"
+            "#d73027,#fc8d59,#fee08b,#ffffbf,#d9ef8b,#91cf60,#1a9850);"
+            "height:12px;width:260px;border-radius:2px;flex-shrink:0;'></div>"
+            "<span style='font-size:11px;white-space:nowrap;'>100%</span>"
+            "<span style='font-size:11px;color:#888;margin-left:6px;'>"
+            "Übereinstimmung (%)</span></div>",
+            unsafe_allow_html=True,
+        )
+
         _fig_aln = make_subplots(
             rows=1, cols=2,
             column_widths=[0.025, 0.975],
@@ -895,24 +1031,21 @@ elif page == "Mitglied":
             z=_frac_z, x=[""], y=_yints,
             colorscale=_frac_cs, zmin=0, zmax=_n_fracs,
             showscale=False, ygap=0,
-            hovertemplate="<b>%{text}</b><extra></extra>",
-            text=[[lb] for lb in _ylabels],
+            texttemplate="",
+            customdata=[[lb] for lb in _ylabels],
+            hovertemplate="<b>%{customdata[0]}</b><extra></extra>",
         ), row=1, col=1)
-        # Right panel: alignment matrix
+        # Right panel: alignment matrix — replace NaN with None so cells stay blank
+        _z_clean = [[None if (isinstance(v, float) and v != v) else v for v in row]
+                    for row in _z.tolist()]
         _fig_aln.add_trace(go.Heatmap(
-            z=_z, x=_xlabels, y=_yints,
+            z=_z_clean, x=_xlabels, y=_yints,
             colorscale="RdYlGn", zmin=30, zmax=100,
-            showscale=True,
-            colorbar=dict(
-                orientation="h",
-                x=0.57, xanchor="center",
-                y=0.985, yanchor="bottom",
-                len=0.5, thickness=12,
-                title=dict(text="Übereinstimmung (%)", side="top"),
-            ),
+            showscale=False,
             xgap=1, ygap=0,
-            hovertemplate="<b>%{text}</b><br>%{x}: %{z:.0f}%<extra></extra>",
-            text=[[lb] * len(_frac_cols_present) for lb in _ylabels],
+            texttemplate="",
+            customdata=[[lb] * len(_frac_cols_present) for lb in _ylabels],
+            hovertemplate="<b>%{customdata[0]}</b><br>%{x}: %{z:.0f}%<extra></extra>",
         ), row=1, col=2)
 
         _shared_yaxis = dict(
@@ -927,7 +1060,7 @@ elif page == "Mitglied":
             yaxis=_shared_yaxis,
             xaxis=dict(showticklabels=False),
             xaxis2=dict(side="top", tickfont=dict(size=12)),
-            margin=dict(l=130, r=20, t=80, b=10),
+            margin=dict(l=130, r=20, t=50, b=10),
             height=_height,
             shapes=_shapes,
         )
@@ -1075,18 +1208,19 @@ elif page == "Mitglied":
     # ── Kammernvergleich ──────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("Kammernvergleich")
-    st.caption(
-        "Wie stark stimmt dieses Mitglied mit der eigenen Fraktion in beiden Kammern überein?"
+    st.info(
+        "Der Ständerat veröffentlicht keine elektronischen Einzelabstimmungsdaten. "
+        "Ein Kammernvergleich ist daher nicht möglich.",
+        icon="ℹ️",
     )
-    with st.spinner("Berechne Kammernvergleich…"):
+    if False:
         cc = cross_chamber_mp(pn, get_all_votes(), members)
-
-    if not cc or not cc.get("vs_oth"):
+    if False:
         st.info(
             f"Kein Kammernvergleich möglich — {frac_label(frac)} "
             f"hat keine Mitglieder in der anderen Kammer."
         )
-    else:
+    if False:
         own_lbl = f"{frac_label(cc['frac'])}-{cc['own_council']}"
         oth_lbl = f"{frac_label(cc['frac'])}-{cc['oth_council']}"
         kc1, kc2, kc3 = st.columns(3)
@@ -1314,33 +1448,9 @@ elif page == "Fraktion":
     # ── Kammernvergleich ──────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("Kammernvergleich NR vs SR")
-    with st.spinner("Berechne Kammernvergleich…"):
-        cc_df = cross_chamber_fraction(frac, all_votes, members)
-
-    if cc_df.empty:
-        st.info(
-            f"{frac_label(frac)} hat keine Mitglieder in beiden Kammern — "
-            "kein Vergleich möglich."
-        )
-    else:
-        n_total  = len(cc_df)
-        n_einig  = int(cc_df["Einig"].sum())
-        pct_einig = round(n_einig / n_total * 100, 1) if n_total else 0
-        kc1, kc2 = st.columns(2)
-        kc1.metric("Gemeinsame Geschäfte", n_total)
-        kc2.metric("NR & SR einig", f"{pct_einig}%")
-
-        # Show disagreements
-        disagree = cc_df[~cc_df["Einig"]].copy()
-        if disagree.empty:
-            st.success("NR und SR stimmten auf allen gemeinsamen Geschäften gleich!")
-        else:
-            st.caption(f"{len(disagree)} Geschäfte mit abweichender Position:")
-            disag_disp = disagree[["BizShort", "BizTitle", "NR", "SR", "Datum"]].rename(
-                columns={"BizShort": "Geschäft", "BizTitle": "Titel"}
-            )
-            disag_disp["Curia Vista"] = disag_disp["Geschäft"].apply(_make_curia_url)
-            cfg = {"Curia Vista": st.column_config.LinkColumn("Curia Vista", display_text="↗")}
-            st.dataframe(disag_disp, column_config=cfg,
-                         use_container_width=True, height=300)
+    st.info(
+        "Der Ständerat veröffentlicht keine elektronischen Einzelabstimmungsdaten. "
+        "Ein Kammernvergleich ist daher nicht möglich.",
+        icon="ℹ️",
+    )
 

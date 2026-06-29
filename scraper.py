@@ -207,61 +207,14 @@ def scrape_votes_session(session_id, session_name, member_pns, log=None):
 
 
 def scrape_sr_votes_direct(log=None):
-    """Fetch SR votes by PersonNumber only — no IdSession filter.
-    The Voting API returns no SR data when filtered by NR session IDs."""
-    _ensure_columns()
-    conn = get_conn()
-    sr_pns = [r["PersonNumber"] for r in
-              conn.execute(
-                  "SELECT PersonNumber FROM members WHERE CouncilAbbr='SR'"
-              ).fetchall()]
-    conn.close()
-
-    if not sr_pns:
-        if log:
-            log("  SR: keine Mitglieder in DB")
-        return 0
-
+    """No-op: the Swiss Parliament API's Voting entity only contains NR votes.
+    The Ständerat does not use electronic roll-call voting at the same granularity;
+    individual SR member votes are not available via the OData API.
+    Former NR members now serving in the SR (e.g. Fivaz) retain their NR vote history,
+    but those votes are filtered out by the L52 session filter in load_all_votes()."""
     if log:
-        log(f"  SR: Lade Abstimmungen für {len(sr_pns)} Mitglieder (direkt)…")
-
-    conn = get_conn()
-    total, failed = 0, 0
-    for i, pn in enumerate(sr_pns):
-        time.sleep(REQUEST_DELAY)
-        try:
-            votes = _fetch_with_retry(
-                "Voting", log,
-                Language="DE", PersonNumber=pn,
-            )
-            for v in votes:
-                # Get session ID from the vote itself
-                sid = (v.get("IdSession") or v.get("SessionId")
-                       or v.get("Session") or 0)
-                try:
-                    sid = int(sid)
-                except (TypeError, ValueError):
-                    sid = 0
-                _store_vote(conn, v, sid)
-                total += 1
-        except Exception as e:
-            failed += 1
-            if log and failed <= 5:
-                log(f"    SR {pn}: {e}")
-
-        if (i + 1) % 10 == 0:
-            conn.commit()
-            if log:
-                log(f"    {i+1}/{len(sr_pns)} SR, {total} Einträge…")
-
-    conn.commit()
-    conn.close()
-    if log:
-        msg = f"  SR: {total} Abstimmungseinträge geladen"
-        if failed:
-            msg += f" ({failed} Fehler)"
-        log(msg)
-    return total
+        log("  SR: Kein elektronisches Abstimmungsprotokoll via API verfügbar — übersprungen.")
+    return 0
 
 
 def backfill_meaning(log=None):

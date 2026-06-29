@@ -52,11 +52,21 @@ def load_members() -> pd.DataFrame:
 def load_all_votes() -> pd.DataFrame:
     p = _HERE / "votes.parquet"
     if p.exists():
-        return pd.read_parquet(p)
-    if _has_db():
+        df = pd.read_parquet(p)
+    elif _has_db():
         with _get_conn() as conn:
-            return pd.read_sql("SELECT * FROM votes", conn)
-    return pd.DataFrame()
+            df = pd.read_sql("SELECT * FROM votes", conn)
+    else:
+        return pd.DataFrame()
+    # Restrict to sessions in sessions.parquet (current legislature only).
+    # votes.parquet contains historical data for long-serving members; keeping
+    # only known sessions prevents old cross-legislature votes from poisoning
+    # faction-alignment and deviation calculations.
+    sp = _HERE / "sessions.parquet"
+    if sp.exists():
+        valid = set(pd.read_parquet(sp)["ID"])
+        df = df[df["SessionId"].isin(valid)]
+    return df
 
 
 def load_votes_for_mp(person_number: int, all_votes: pd.DataFrame | None = None) -> pd.DataFrame:
