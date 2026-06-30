@@ -1654,18 +1654,21 @@ elif page == "Mitglied":
             frac_strength = fraction_majority_strength(combined, members, frac)
             deviated["Fraktionsmehrheit"] = deviated["GroupKey"].map(frac_strength).fillna("—")
 
-            _tf1, _tf2 = st.columns(2)
-            _all_topics  = sorted(TOPICS.keys())
-            _topic_sel   = _tf1.multiselect(
-                "Thema", _all_topics, default=_all_topics, key="dev_topic_filter"
-            )
+            _all_topics = sorted(TOPICS.keys())
+            st.markdown("**Thema**")
+            _t_cols = st.columns(3)
+            _topic_sel = [
+                t for i, t in enumerate(_all_topics)
+                if _t_cols[i % 3].checkbox(t, value=True, key=f"dev_topic_{i}")
+            ]
+
             _other_fracs = [f for f in FRAC_ORDER if f != frac and f in positions.columns]
-            with _tf2:
-                st.markdown("**Gestimmt mit Fraktion**")
-                _frac_sel = [
-                    f for f in _other_fracs
-                    if st.checkbox(frac_label(f), value=True, key=f"dev_frac_{f}")
-                ]
+            st.markdown("**Gestimmt mit Fraktion**")
+            _f_cols = st.columns(len(_other_fracs))
+            _frac_sel = [
+                f for i, f in enumerate(_other_fracs)
+                if _f_cols[i].checkbox(frac_label(f), value=True, key=f"dev_frac_{f}")
+            ]
 
             _dev_show = deviated.copy()
             if _topic_sel and len(_topic_sel) < len(_all_topics):
