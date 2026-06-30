@@ -1674,70 +1674,38 @@ elif page == "Mitglied":
             _all_topics = sorted(TOPICS.keys())
             _other_fracs = [f for f in FRAC_ORDER if f != frac and f in positions.columns]
 
-            # Per-topic deviation rates for the bar chart
-            _tagged_comb = tag_topics(combined)
+            # Per-topic share of total deviations (not deviation rate within topic)
             _tagged_devv = tag_topics(deviated)
-            _topic_rate  = {}
-            for _t in _all_topics:
-                _tot = int(_tagged_comb["Topics"].map(lambda ts, t=_t: t in ts).sum())
-                _dv  = int(_tagged_devv["Topics"].map(lambda ts, t=_t: t in ts).sum())
-                _topic_rate[_t] = (_dv / _tot * 100) if _tot > 0 else 0.0
+            _total_dev   = max(len(deviated), 1)
+            _topic_share = {
+                _t: int(_tagged_devv["Topics"].map(lambda ts, t=_t: t in ts).sum()) / _total_dev * 100
+                for _t in _all_topics
+            }
+            # Sort high→low for display; stable alphabetical index for widget keys
+            _sorted_topics = sorted(_all_topics, key=lambda t: _topic_share[t], reverse=True)
+            _alpha_idx = {t: i for i, t in enumerate(_all_topics)}
 
-            # Selection state (default: all included)
-            _tsel_key = "dev_topic_set"
-            if _tsel_key not in st.session_state:
-                st.session_state[_tsel_key] = set(_all_topics)
-            _sel_topics = st.session_state[_tsel_key]
-
-            # Build horizontal bar chart (bottom-to-top = alphabetical top-to-bottom)
-            _topics_rev = list(reversed(_all_topics))
-            _ylabels    = [f"{TOPIC_EMOJI.get(t,'')} {t}" for t in _topics_rev]
-            _xvals      = [_topic_rate[t] for t in _topics_rev]
-
-            def _bar_color(t, rate):
-                if t not in _sel_topics:
-                    return "rgba(180,180,180,0.22)"
-                v = min(1.0, rate / 25.0)
-                return f"rgb(255,{int(210-170*v)},{int(160-150*v)})"
-
-            _tbar_fig = go.Figure(go.Bar(
-                x=_xvals, y=_ylabels, orientation="h",
-                marker_color=[_bar_color(t, _topic_rate[t]) for t in _topics_rev],
-                customdata=[[t] for t in _topics_rev],
-                hovertemplate="%{y}: %{x:.1f}%<extra></extra>",
-            ))
-            _tbar_fig.update_layout(
-                height=420, margin=dict(l=0, r=10, t=4, b=30),
-                xaxis=dict(title="Abweichungsrate (%)",
-                           range=[0, max(max(_xvals) * 1.25, 5)]),
-                yaxis=dict(tickfont=dict(size=11)),
-                dragmode=False,
-                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-            )
-
-            _fc1, _fc2 = st.columns([3, 1])
-            with _fc1:
-                st.caption("Thema anklicken um es ein-/auszuschliessen")
-                _tev = st.plotly_chart(
-                    _tbar_fig, use_container_width=True,
-                    on_select="rerun", key="dev_topic_chart",
-                )
-                if _tev and _tev.selection and _tev.selection.points:
-                    _clicked = _tev.selection.points[0]["customdata"][0]
-                    _new_sel = set(_sel_topics)
-                    _new_sel.discard(_clicked) if _clicked in _new_sel else _new_sel.add(_clicked)
-                    st.session_state[_tsel_key] = _new_sel
-                    st.rerun()
-
-            with _fc2:
-                with st.form("dev_frac_form"):
-                    _frac_sel = st.multiselect(
-                        "Mit Fraktion", options=_other_fracs, default=_other_fracs,
-                        format_func=frac_label, key="dev_frac_ms",
+            with st.form("dev_filters"):
+                _tc1, _tc2, _tc3, _tfc = st.columns([3, 3, 3, 2])
+                _topic_sel = []
+                for _col, _chunk in zip([_tc1, _tc2, _tc3],
+                                        [_sorted_topics[0:5], _sorted_topics[5:10],
+                                         _sorted_topics[10:14]]):
+                    for _t in _chunk:
+                        _lbl = f"{TOPIC_EMOJI.get(_t,'')} {_t} ({_topic_share[_t]:.0f}%)"
+                        if _col.checkbox(_lbl, value=True, key=f"dev_topic_{_alpha_idx[_t]}"):
+                            _topic_sel.append(_t)
+                with _tfc:
+                    st.markdown(
+                        "<p style='color:#f63366;font-weight:600;margin:0 0 4px'>Mit Fraktion</p>",
+                        unsafe_allow_html=True,
                     )
-                    st.form_submit_button("Anwenden")
-
-            _topic_sel = list(_sel_topics)
+                    _frac_sel = st.multiselect(
+                        "", options=_other_fracs, default=_other_fracs,
+                        format_func=frac_label, key="dev_frac_ms",
+                        label_visibility="collapsed",
+                    )
+                st.form_submit_button("Anwenden")
 
             _dev_show = deviated.copy()
             if _topic_sel and len(_topic_sel) < len(_all_topics):
