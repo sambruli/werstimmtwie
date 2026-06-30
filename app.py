@@ -1674,14 +1674,10 @@ elif page == "Mitglied":
             _all_topics = sorted(TOPICS.keys())
             _other_fracs = [f for f in FRAC_ORDER if f != frac and f in positions.columns]
 
-            # Per-topic share of total deviations (not deviation rate within topic)
-            _tagged_devv = tag_topics(deviated)
-            _total_dev   = max(len(deviated), 1)
-            _topic_share = {
-                _t: int(_tagged_devv["Topics"].map(lambda ts, t=_t: t in ts).sum()) / _total_dev * 100
-                for _t in _all_topics
-            }
-            # Sort high→low for display; stable alphabetical index for widget keys
+            # Reuse topic_dev (already computed above) — same metric as "Abweichungsrate nach Thema"
+            _topic_share = {row["Thema"]: row["Abweichung (%)"] for _, row in topic_dev.iterrows()}
+            for _t in _all_topics:
+                _topic_share.setdefault(_t, 0.0)
             _sorted_topics = sorted(_all_topics, key=lambda t: _topic_share[t], reverse=True)
             _alpha_idx = {t: i for i, t in enumerate(_all_topics)}
 
@@ -1692,7 +1688,7 @@ elif page == "Mitglied":
                                         [_sorted_topics[0:5], _sorted_topics[5:10],
                                          _sorted_topics[10:14]]):
                     for _t in _chunk:
-                        _lbl = f"{TOPIC_EMOJI.get(_t,'')} {_t} ({_topic_share[_t]:.0f}%)"
+                        _lbl = f"{TOPIC_EMOJI.get(_t,'')} {_t} ({_topic_share[_t]:.1f}%)"
                         if _col.checkbox(_lbl, value=True, key=f"dev_topic_{_alpha_idx[_t]}"):
                             _topic_sel.append(_t)
                 with _tfc:
@@ -1705,7 +1701,14 @@ elif page == "Mitglied":
                         format_func=frac_label, key="dev_frac_ms",
                         label_visibility="collapsed",
                     )
-                st.form_submit_button("Anwenden")
+                _btn1, _btn2 = st.columns([1, 2])
+                _submitted = _btn1.form_submit_button("Anwenden")
+                _cleared   = _btn2.form_submit_button("× Themen zurücksetzen")
+
+            if _cleared:
+                for _ci in range(len(_all_topics)):
+                    st.session_state[f"dev_topic_{_ci}"] = True
+                st.rerun()
 
             _dev_show = deviated.copy()
             if _topic_sel and len(_topic_sel) < len(_all_topics):
