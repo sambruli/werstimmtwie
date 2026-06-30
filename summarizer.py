@@ -130,25 +130,6 @@ def summarize_geschaeft(biz_short: str, subject: str,
     return _ask("\n".join(l for l in lines if l is not None))
 
 
-def summarize_chart_filtered(chart_name: str, data_summary: str) -> str:
-    """Like summarize_chart_overview but returns a formatted string for ai_button."""
-    bullets = summarize_chart_overview(chart_name, data_summary)
-    return "\n\n".join(f"• {b}" for b in bullets) if bullets else "Keine Zusammenfassung verfügbar."
-
-
-def summarize_chart_overview(chart_name: str, data_summary: str) -> list[str]:
-    """Return 3-4 German bullet strings summarizing a chart's key observations."""
-    raw = _ask(
-        f"Analysiere diese Datenvisualisierung über das Schweizer Parlament:\n"
-        f"Chart: {chart_name}\n\n{data_summary}\n\n"
-        "Schreibe genau 3-4 präzise Beobachtungen auf Deutsch. "
-        "Format: Jede Beobachtung beginnt mit '• ' (Bullet + Leerzeichen) auf einer eigenen Zeile. "
-        "Jede Beobachtung umfasst 2-3 Sätze und nennt konkrete Zahlen aus den Daten. "
-        "Keine Einleitung, kein Schlussatz ausserhalb der Bullets."
-    )
-    return [ln.lstrip("•").strip() for ln in raw.splitlines() if ln.strip().startswith("•")]
-
-
 def summarize_fraction_deviators(fraction: str, rows: list[dict]) -> str:
     lines = [
         f"Fraktion: {fraction} — Abweichungsraten der Mitglieder:", "",

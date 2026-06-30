@@ -4,8 +4,6 @@ Run: streamlit run app.py
 """
 
 import os
-import json
-import hashlib
 from urllib.parse import urlencode
 import streamlit as st
 import pandas as pd
@@ -592,43 +590,6 @@ def ai_button(key, fn, *args):
             except Exception as e:
                 st.error(f"Fehler: {e}")
 
-_GESAMTBILD_FILE = DB_PATH.parent / "gesamtbild_cache.json"
-
-def _summarize_chart_filtered(chart_name: str, data_summary: str) -> str:
-    """Wrapper for ai_button: returns formatted bullet string for a filtered chart."""
-    bullets = summarizer.summarize_chart_overview(chart_name, data_summary)
-    return "\n\n".join(f"• {b}" for b in bullets) if bullets else "Keine Zusammenfassung verfügbar."
-
-def _show_gesamtbild_persistent(chart_id: str, data_summary: str):
-    """Display Gesamtbild from file cache; regenerates + saves only when data hash changes."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return
-    data_hash = hashlib.md5(data_summary.encode()).hexdigest()[:12]
-    cache = {}
-    if _GESAMTBILD_FILE.exists():
-        try:
-            cache = json.loads(_GESAMTBILD_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    entry = cache.get(chart_id, {})
-    if entry.get("hash") == data_hash and entry.get("bullets"):
-        bullets = entry["bullets"]
-    else:
-        with st.spinner("Gesamtbild wird generiert…"):
-            try:
-                bullets = summarizer.summarize_chart_overview(chart_id, data_summary)
-            except Exception:
-                return
-            if bullets:
-                cache[chart_id] = {"hash": data_hash, "bullets": bullets}
-                try:
-                    _GESAMTBILD_FILE.write_text(
-                        json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8"
-                    )
-                except Exception:
-                    pass
-    if bullets:
-        st.info("**Gesamtbild**\n\n" + "\n\n".join(f"• {b}" for b in bullets))
 
 def check_api_key():
     key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -820,23 +781,6 @@ if page == "Home":
         )
         _mp_click_nav(_ev_pca, "home_pca", get_members())
 
-        _pca_grp = _pca_plot.groupby("FractionAbbr")[["PC1", "Abweichung (%)"]].mean().round(2)
-        _pca_cnt = _pca_plot["FractionAbbr"].value_counts()
-        _pca_data_str = (
-            f"Politische Landkarte: {len(_pca_plot)} Parlamentarier:innen\n"
-            f"X-Achse: politische Ausrichtung (links-rechts aus Abstimmungsverhalten)\n"
-            f"Y-Achse: Abweichungsrate vom Fraktionskurs (%)\n\n"
-            "Fraktions-Schwerpunkte (Ø X-Position, Ø Abweichung, Anzahl MPs):\n"
-            + "\n".join(
-                f"  {f}: X={_pca_grp.at[f,'PC1']:.2f}, "
-                f"Abweichung={_pca_grp.at[f,'Abweichung (%)']:.1f}%, N={_pca_cnt.get(f,0)}"
-                for f in _pca_grp.index if f in _pca_cnt
-            )
-            + f"\n\nGesamter X-Bereich: {_pca_plot['PC1'].min():.2f} bis {_pca_plot['PC1'].max():.2f}"
-            + f"\nAbweichungsbereich: {_pca_plot['Abweichung (%)'].min():.1f}% bis "
-            f"{_pca_plot['Abweichung (%)'].max():.1f}%"
-        )
-        _show_gesamtbild_persistent("Politische Landkarte (PCA)", _pca_data_str)
 
     st.markdown("---")
     st.subheader("So verwendest du die App")
@@ -1136,27 +1080,6 @@ elif page == "Geschäft":
             )
             _biz_click_nav(_ev_pol, "pol_scatter")
 
-            _n_pol = len(_pol_show)
-            _both_high = (_pol_show["PctDevLeft"] > 15) & (_pol_show["PctDevRight"] > 15)
-            _pol_str = (
-                f"Lagerwechsel-Scatter: {_n_pol} polarisierte Abstimmungen\n\n"
-                f"Linksdrift (% Mitte/FDP/SVP stimmen mit G/SP):\n"
-                f"  Ø={_pol_show['PctDevLeft'].mean():.1f}%, "
-                f"max={_pol_show['PctDevLeft'].max():.1f}%\n"
-                f"Rechtsdrift (% G/SP/Mitte stimmen mit FDP/SVP):\n"
-                f"  Ø={_pol_show['PctDevRight'].mean():.1f}%, "
-                f"max={_pol_show['PctDevRight'].max():.1f}%\n"
-                f"Abstimmungen mit starkem beideitigem Lagerwechsel (>15% in beide Richtungen): "
-                f"{_both_high.sum()} ({_both_high.mean()*100:.0f}%)\n"
-                + (
-                    f"\nTop Linksdrift: {str(_pol_show.loc[_pol_show['PctDevLeft'].idxmax(),'BizTitle'])[:60]} "
-                    f"({_pol_show['PctDevLeft'].max():.1f}%)\n"
-                    f"Top Rechtsdrift: {str(_pol_show.loc[_pol_show['PctDevRight'].idxmax(),'BizTitle'])[:60]} "
-                    f"({_pol_show['PctDevRight'].max():.1f}%)"
-                )
-            )
-            _show_gesamtbild_persistent("Lagerwechsel", _pol_str)
-
         # ── Landing: direction × magnitude scatter ────────────────────────
         st.markdown("---")
         st.subheader("Richtung & Stärke der Abweichungen")
@@ -1289,31 +1212,6 @@ elif page == "Geschäft":
                 "Punkt anklicken für Direktnavigation."
             )
             _biz_click_nav(_ev_dm, "dm_scatter")
-
-            _dm_grp = _dm_show.groupby("Koalitionstyp").agg(
-                N=("NetGravity", "count"),
-                AvgDir=("NetGravity", "mean"),
-                AvgDev=("DeviationPct", "mean"),
-            ).round(2)
-            _dm_str = (
-                f"Richtung & Stärke der Abweichungen: {len(_dm_show)} polarisierte Abstimmungen\n\n"
-                "Koalitionstyp (N, Ø Richtung, Ø Abweichungsrate):\n"
-                + "\n".join(
-                    f"  {ct}: N={int(row['N'])}, "
-                    f"Ø Richtung={row['AvgDir']:.2f}, "
-                    f"Ø Abweichung={row['AvgDev']:.1f}%"
-                    for ct, row in _dm_grp.iterrows()
-                )
-                + f"\n\nStärkster Linkszug: {_dm_show['NetGravity'].min():.2f}\n"
-                + f"Stärkster Rechtszug: {_dm_show['NetGravity'].max():.2f}\n"
-                + f"Höchste interne Abweichungsrate: {_dm_show['DeviationPct'].max():.1f}%"
-            )
-            ai_button(
-                "dm_gesamtbild",
-                _summarize_chart_filtered,
-                "Richtung & Stärke der Abweichungen",
-                _dm_str,
-            )
         st.stop()
 
     with st.spinner("Suche…"):
@@ -1703,8 +1601,9 @@ elif page == "Mitglied":
             fig.update_layout(xaxis_tickangle=-30, coloraxis_showscale=False)
             st.plotly_chart(fig, use_container_width=True)
 
-        # Per-Session timeline
+        # Per-Session data (computed here, rendered below before Kammernvergleich)
         active_df = dev_df[~dev_df["DecisionNorm"].isin(ABSENT)].copy()
+        _sess_chart_df = None
         if not active_df.empty and "SessionId" in active_df.columns:
             sess_df   = get_sessions()
             sess_map  = dict(zip(sess_df["ID"].astype(str), sess_df["Name"]))
@@ -1719,10 +1618,7 @@ elif page == "Mitglied":
             )
             by_sess = by_sess.sort_values("_ord").drop(columns=["_ord"])
             if len(by_sess) > 1:
-                fig2 = px.line(by_sess, x="Session", y="Abweichung (%)",
-                               title="Abweichungsrate pro Session", markers=True)
-                fig2.update_layout(xaxis_tickangle=-20)
-                st.plotly_chart(fig2, use_container_width=True)
+                _sess_chart_df = by_sess
 
         # Deviation direction
         st.subheader("In welche Richtung?")
@@ -1753,11 +1649,38 @@ elif page == "Mitglied":
             else:
                 st.info("Zu wenig gemeinsame Abstimmungen für Richtungsanalyse.")
 
-            # Deviated votes table
+            # Deviated votes table with filters
             st.subheader("Abweichende Abstimmungen")
             frac_strength = fraction_majority_strength(combined, members, frac)
             deviated["Fraktionsmehrheit"] = deviated["GroupKey"].map(frac_strength).fillna("—")
-            vote_table(deviated, extra_cols=["FracMajority", "Fraktionsmehrheit"])
+
+            _tf1, _tf2 = st.columns(2)
+            _topic_opts = ["Alle Themen"] + sorted(TOPICS.keys())
+            _topic_sel  = _tf1.selectbox("Thema", _topic_opts, key="dev_topic_filter")
+            _other_fracs = [f for f in FRAC_ORDER if f != frac
+                            and f in positions["FractionAbbr"].values]
+            _frac_with_opts  = ["Alle Fraktionen"] + [frac_label(f) for f in _other_fracs]
+            _frac_with_sel   = _tf2.selectbox(
+                "Gestimmt mit Fraktion", _frac_with_opts, key="dev_frac_filter"
+            )
+
+            _dev_show = deviated.copy()
+            if _topic_sel != "Alle Themen":
+                _dev_show = filter_by_topic(tag_topics(_dev_show), _topic_sel)
+            if _frac_with_sel != "Alle Fraktionen":
+                _sel_frac_abbr = _other_fracs[_frac_with_opts.index(_frac_with_sel) - 1]
+                _pos_f = (
+                    positions[positions["FractionAbbr"] == _sel_frac_abbr]
+                    [["GroupKey", "FracMajority"]]
+                    .rename(columns={"FracMajority": "_cmp"})
+                )
+                _dev_show = (
+                    _dev_show.merge(_pos_f, on="GroupKey", how="left")
+                    .pipe(lambda d: d[d["DecisionNorm"] == d["_cmp"]])
+                    .drop(columns=["_cmp"], errors="ignore")
+                )
+
+            vote_table(_dev_show, extra_cols=["Fraktionsmehrheit"])
         else:
             st.info("Keine Abweichungen gefunden.")
 
@@ -1771,6 +1694,14 @@ elif page == "Mitglied":
         else:
             ai_button("sum_mp_p", summarizer.summarize_mp_profile,
                       mp_name, frac, score, td_dicts)
+
+        # Session timeline (moved here, just before Kammernvergleich)
+        if _sess_chart_df is not None:
+            st.markdown("---")
+            fig2 = px.line(_sess_chart_df, x="Session", y="Abweichung (%)",
+                           title="Abweichungsrate pro Session", markers=True)
+            fig2.update_layout(xaxis_tickangle=-20)
+            st.plotly_chart(fig2, use_container_width=True)
 
     # ── Kammernvergleich ──────────────────────────────────────────────────
     st.markdown("---")
@@ -1888,15 +1819,6 @@ elif page == "Fraktion":
                 "Anteil der Abstimmungen, bei denen alle anwesenden Fraktionsmitglieder gleich stimmten. "
                 "Je höher, desto disziplinierter die Fraktion."
             )
-            _coh_str = (
-                "Fraktionskohäsion (% der Abstimmungen mit vollständiger Einigkeit):\n"
-                + "\n".join(
-                    f"  {row['FraktionLabel']}: {row['Kohäsion (%)']:.1f}%"
-                    f" ({int(row['Mitglieder'])} Mitglieder)"
-                    for _, row in _coh_plot.sort_values("Kohäsion (%)", ascending=False).iterrows()
-                )
-            )
-            _show_gesamtbild_persistent("Fraktionskohäsion", _coh_str)
 
         # ── Deviation strip chart ─────────────────────────────────────────
         with st.spinner("Lade Abweichungsübersicht…"):
@@ -1935,21 +1857,6 @@ elif page == "Fraktion":
             st.caption("Jeder Punkt ist ein Parlamentsmitglied. Punkt anklicken für Direktnavigation.")
             _mp_click_nav(_ev_strip, "frac_strip", members)
 
-            _strip_grp = _strip_mp.groupby("Fraktion")["Abweichung (%)"].agg(
-                ["mean", "max", "std"]
-            ).round(1)
-            _max_row = _strip_mp.loc[_strip_mp["Abweichung (%)"].idxmax()]
-            _strip_str = (
-                f"Individuelle Abweichungsraten: {len(_strip_mp)} Parlamentarier:innen\n\n"
-                "Ø Abweichung / max / Streuung pro Fraktion:\n"
-                + "\n".join(
-                    f"  {f}: Ø={row['mean']:.1f}%, max={row['max']:.1f}%, σ={row['std']:.1f}%"
-                    for f, row in _strip_grp.iterrows()
-                )
-                + f"\n\nStärkster Abweichler: {_max_row['Name']} ({_max_row['Fraktion']}): "
-                f"{_max_row['Abweichung (%)']:.1f}%"
-            )
-            _show_gesamtbild_persistent("Abweichungsraten aller MPs (Strip)", _strip_str)
 
         st.stop()
 
