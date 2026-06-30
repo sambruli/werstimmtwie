@@ -11,7 +11,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from db import init_db, db_stats, DB_PATH, get_conn
-from scraper import full_scrape, update_scrape, scrape_sr_votes_direct, backfill_meaning, backfill_biz_tags
+from scraper import full_scrape, update_scrape, scrape_sr_votes_direct, backfill_meaning
 from analysis import (
     load_members, load_votes_for_mp, load_all_votes, load_votes_for_fraction,
     load_sessions,
@@ -633,7 +633,7 @@ def check_api_key():
             st.sidebar.success("Key gespeichert")
 
 def no_data_stop():
-    st.warning("Keine Daten — bitte zuerst scrapen (Seite 'Daten').")
+    st.warning("Keine Daten verfügbar. Die Daten werden automatisch wöchentlich aktualisiert.")
     st.stop()
 
 def _make_curia_url(biz_short, biz_number=""):
@@ -691,15 +691,6 @@ Bei knapper Mehrheit (z.B. 52%) ist eine abweichende Stimme weniger auffällig a
 st.sidebar.title("🏛️ Wer stimmt wie?")
 check_api_key()
 
-with st.sidebar.expander("⚙️ Daten", expanded=False):
-    if st.button("Themen-Tags laden (Curia Vista)", key="btn_biz_tags"):
-        with st.spinner("Lade Themen-Tags von parlament.ch…"):
-            try:
-                n = backfill_biz_tags(log=lambda m: None)
-                st.success(f"{n} neue Geschäfte getaggt.")
-                st.cache_data.clear()
-            except Exception as _e:
-                st.error(str(_e))
 
 _pages = ["Home", "Fraktion", "Mitglied", "Thema", "Geschäft"]
 

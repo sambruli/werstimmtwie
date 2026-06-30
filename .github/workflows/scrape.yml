@@ -1,0 +1,36 @@
+name: Scrape Parliament Data
+
+on:
+  schedule:
+    # Every Monday at 05:00 UTC — catches sessions that ended the previous Friday.
+    # The job is a no-op when there are no new sessions.
+    - cron: '0 5 * * 1'
+  workflow_dispatch:   # allow manual trigger from the Actions tab
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to push the updated parquet files
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install swissparlpy pandas pyarrow
+
+      - name: Run scraper
+        run: python ci_scrape.py
+
+      - name: Commit updated parquets
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add votes.parquet members.parquet sessions.parquet biz_tags.parquet
+          git diff --staged --quiet \
+            || git commit -m "Auto-scrape: update parliament data $(date -u +%Y-%m-%d)"
+          git push
