@@ -1695,16 +1695,6 @@ elif page == "Mitglied":
                 _topic_share.setdefault(_t, 0.0)
             _sorted_topics = sorted(_all_topics, key=lambda t: _topic_share[t], reverse=True)
 
-            # Staging flags for select-all / clear-all buttons (set before widgets render)
-            if st.session_state.pop("_dev_topic_reset", False):
-                st.session_state["dev_topics_ms"] = []
-            if st.session_state.pop("_dev_topic_all", False):
-                st.session_state["dev_topics_ms"] = _sorted_topics
-            if st.session_state.pop("_dev_frac_reset", False):
-                st.session_state["dev_fracs_ms"] = []
-            if st.session_state.pop("_dev_frac_all", False):
-                st.session_state["dev_fracs_ms"] = _other_fracs
-
             with st.form("dev_filters"):
                 _fc1, _fc2 = st.columns([3, 1])
                 with _fc1:
@@ -1723,22 +1713,7 @@ elif page == "Mitglied":
                         key="dev_fracs_ms",
                         format_func=frac_label,
                     )
-                _btn_cols = st.columns([1, 1, 1, 1, 2])
-                _btn_cols[0].form_submit_button("Anwenden")
-
-            _rc1, _rc2, _rc3, _rc4 = st.columns([1, 1, 1, 1])
-            if _rc1.button("Themen: alle", key="topic_sel_all"):
-                st.session_state["_dev_topic_all"] = True
-                st.rerun()
-            if _rc2.button("Themen: keine", key="topic_sel_none"):
-                st.session_state["_dev_topic_reset"] = True
-                st.rerun()
-            if _rc3.button("Fraktionen: alle", key="frac_sel_all"):
-                st.session_state["_dev_frac_all"] = True
-                st.rerun()
-            if _rc4.button("Fraktionen: keine", key="frac_sel_none"):
-                st.session_state["_dev_frac_reset"] = True
-                st.rerun()
+                st.form_submit_button("Anwenden")
 
             _dev_show = deviated.copy()
             if _topic_sel and len(_topic_sel) < len(_sorted_topics):

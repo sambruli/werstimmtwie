@@ -129,13 +129,14 @@ def _group_key(v, session_id):
     return f"{session_id}|{date}|{short}|{subj}"
 
 
-def _store_vote(conn, v, session_id):
+def _store_vote(conn, v, session_id, vote_date_map: dict | None = None):
     gk  = _group_key(v, session_id)
     dec = v.get("Decision")
     title       = str(v.get("BusinessTitle") or v.get("BillTitle") or v.get("Subject") or "")[:200]
     tag         = str(v.get("TagName")    or v.get("Tag")     or "")[:200]
     meaning_yes = str(v.get("MeaningYes") or "")[:300]
     meaning_no  = str(v.get("MeaningNo")  or "")[:300]
+    date = (vote_date_map or {}).get(gk) or str(v.get("MeetingDate") or "")[:10]
     conn.execute("""
         INSERT INTO votes
         (GroupKey,SessionId,PersonNumber,MeetingDate,
@@ -147,7 +148,7 @@ def _store_vote(conn, v, session_id):
             MeaningNo  = CASE WHEN excluded.MeaningNo  != '' THEN excluded.MeaningNo  ELSE MeaningNo  END
     """, (
         gk, session_id, v.get("PersonNumber"),
-        str(v.get("MeetingDate") or "")[:10],
+        date,
         str(v.get("BusinessNumber") or ""),
         str(v.get("BusinessShortNumber") or ""),
         title,
@@ -173,6 +174,23 @@ def scrape_votes_session(session_id, session_name, member_pns, log=None):
     if log:
         log(f"  {session_name}: lade {len(member_pns)} Mitglieder...")
 
+    # Pre-fetch per-Abstimmung dates from the Vote endpoint (one row per vote event).
+    # Build GroupKey -> date map so _store_vote can fill MeetingDate without a
+    # separate lookup per person.
+    vote_date_map: dict[str, str] = {}
+    try:
+        vote_meta = _fetch_with_retry("Vote", log, Language="DE", IdSession=session_id)
+        for vm in vote_meta:
+            short = str(vm.get("BusinessShortNumber") or "")
+            subj  = str(vm.get("Subject") or "")[:40]
+            gk    = f"{session_id}||{short}|{subj}"
+            vend  = vm.get("VoteEndWithTimezone") or vm.get("VoteEnd")
+            if vend:
+                vote_date_map[gk] = str(vend)[:10]
+    except Exception as e:
+        if log:
+            log(f"    Warnung: Vote-Metadaten nicht ladbar ({e})")
+
     total, failed = 0, 0
     for i, pn in enumerate(member_pns):
         time.sleep(REQUEST_DELAY)
@@ -182,7 +200,7 @@ def scrape_votes_session(session_id, session_name, member_pns, log=None):
                 Language="DE", IdSession=session_id, PersonNumber=pn,
             )
             for v in votes:
-                _store_vote(conn, v, session_id)
+                _store_vote(conn, v, session_id, vote_date_map)
                 total += 1
         except Exception as e:
             failed += 1

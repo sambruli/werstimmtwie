@@ -67,6 +67,12 @@ def load_all_votes() -> pd.DataFrame:
     if sp.exists():
         valid = set(pd.read_parquet(sp)["ID"])
         df = df[df["SessionId"].isin(valid)]
+    # Normalize BizShort: NR uses "24.024", SR uses "24.24" for the same affair.
+    # Strip leading zeros after the dot so both chambers group under one Geschäft.
+    if "BizShort" in df.columns:
+        df["BizShort"] = df["BizShort"].str.replace(
+            r"^(\d+)\.0+(\d+)$", r"\1.\2", regex=True
+        )
     return df
 
 
