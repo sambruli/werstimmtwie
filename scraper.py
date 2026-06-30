@@ -372,3 +372,71 @@ def _ensure_columns():
 def _ensure_tagname_column():
     """Kept for backwards compatibility — calls _ensure_columns."""
     _ensure_columns()
+
+
+def backfill_biz_tags(log=None):
+    """Fetch official Curia Vista topic tags for all affairs via bulk Business query.
+
+    Fetches all Business records for legislatures 51+52 in two API calls,
+    joins to known BizNumbers in the votes table, and writes biz_tags.parquet.
+    Safe to re-run: merges with existing data.
+    """
+    import pandas as pd
+    from pathlib import Path
+    here = Path(__file__).parent
+
+    # Known BizNumbers from DB
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT BizShort, BizNumber FROM votes "
+            "WHERE BizNumber IS NOT NULL AND BizNumber != ''"
+        ).fetchall()
+    known = {str(r[1]).strip(): str(r[0]).strip() for r in rows if r[1]}
+
+    if not known:
+        if log:
+            log("  Keine BizNumbers in der Datenbank.")
+        return 0
+
+    # Bulk fetch Business records for legislatures 51 and 52
+    all_biz: dict[str, str] = {}  # BizNumber → TagNames
+    for leg in (51, 52):
+        if log:
+            log(f"  Lade Business-Daten Legislatur {leg}…")
+        try:
+            biz_rows = list(spp.get_data("Business", Language="DE",
+                                         SubmissionLegislativePeriod=leg))
+            for b in biz_rows:
+                bn = str(b.get("ID") or "").strip()
+                if bn:
+                    all_biz[bn] = str(b.get("TagNames") or "").strip()
+            if log:
+                log(f"    {len(biz_rows)} Geschäfte geladen")
+        except Exception as e:
+            if log:
+                log(f"  Legislatur {leg}: Fehler – {e}")
+
+    # Build records for BizNumbers we have votes for
+    records = []
+    for bn, bs in known.items():
+        tag_names = all_biz.get(bn, "")
+        records.append({"BizNumber": bn, "BizShort": bs, "TagNames": tag_names})
+
+    if not records:
+        if log:
+            log("  Keine übereinstimmenden Geschäfte gefunden.")
+        return 0
+
+    new_df = pd.DataFrame(records)
+    bp = here / "biz_tags.parquet"
+    if bp.exists():
+        old_df = pd.read_parquet(bp)
+        combined = pd.concat([old_df, new_df]).drop_duplicates("BizNumber", keep="last")
+    else:
+        combined = new_df
+    combined.to_parquet(bp, index=False)
+
+    tagged = int((new_df["TagNames"] != "").sum())
+    if log:
+        log(f"  {len(records)} Geschäfte gespeichert, {tagged} mit Tags → biz_tags.parquet")
+    return tagged

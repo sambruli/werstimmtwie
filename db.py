@@ -47,6 +47,12 @@ CREATE INDEX IF NOT EXISTS idx_v_person  ON votes(PersonNumber);
 CREATE INDEX IF NOT EXISTS idx_v_session ON votes(SessionId);
 CREATE INDEX IF NOT EXISTS idx_v_group   ON votes(GroupKey);
 CREATE INDEX IF NOT EXISTS idx_v_date    ON votes(MeetingDate);
+
+CREATE TABLE IF NOT EXISTS biz_tags (
+    BizNumber  TEXT PRIMARY KEY,
+    BizShort   TEXT,
+    TagNames   TEXT DEFAULT ''
+);
 """
 
 def get_conn():

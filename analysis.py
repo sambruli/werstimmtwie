@@ -2,6 +2,7 @@
 Analysis functions — SQL-first for performance, pandas for aggregation.
 """
 
+from functools import lru_cache
 from pathlib import Path
 import pandas as pd
 from topics import classify, any_topic
@@ -95,9 +96,39 @@ def load_sessions() -> pd.DataFrame:
     return pd.DataFrame()
 
 
-# ── Topic tagging ─────────────────────────────────────────────────────────────
+# ── Topic tagging (Curia Vista official tags via biz_tags.parquet) ───────────
+
+@lru_cache(maxsize=1)
+def _biz_tag_lookup() -> dict:
+    """Returns {biz_number_str: [tag1, tag2, ...]} loaded once per process."""
+    p = _HERE / "biz_tags.parquet"
+    if not p.exists():
+        return {}
+    df = pd.read_parquet(p)
+    lookup = {}
+    for _, row in df.iterrows():
+        bn = str(row.get("BizNumber") or "").strip()
+        tags_str = str(row.get("TagNames") or "").strip()
+        if bn:
+            lookup[bn] = [t.strip() for t in tags_str.split("|") if t.strip()] if tags_str else []
+    return lookup
+
+
+def load_available_tags() -> list[str]:
+    """Sorted list of Curia Vista tags present in biz_tags.parquet.
+    Falls back to custom TOPICS keys if the parquet hasn't been scraped yet."""
+    lookup = _biz_tag_lookup()
+    if not lookup:
+        from topics import TOPICS
+        return sorted(TOPICS.keys())
+    tags: set[str] = set()
+    for tag_list in lookup.values():
+        tags.update(tag_list)
+    return sorted(tags)
+
 
 def _topic_text(df: pd.DataFrame) -> pd.Series:
+    """Keyword fallback: concatenate title/subject/tagname columns."""
     cols = []
     for col in ("BizTitle", "Subject", "TagName"):
         if col in df.columns:
@@ -106,10 +137,17 @@ def _topic_text(df: pd.DataFrame) -> pd.Series:
 
 
 def tag_topics(df: pd.DataFrame) -> pd.DataFrame:
-    text = _topic_text(df)
+    """Tag each vote row with Curia Vista official topic tags.
+    Falls back to keyword matching if biz_tags.parquet is not present."""
     df = df.copy()
-    df["Topics"]   = text.map(classify)
-    df["AnyTopic"] = text.map(any_topic)
+    lookup = _biz_tag_lookup()
+    if lookup and "BizNumber" in df.columns:
+        df["Topics"]   = df["BizNumber"].map(lambda bn: lookup.get(str(bn or "").strip(), []))
+        df["AnyTopic"] = df["Topics"].map(bool)
+    else:
+        text = _topic_text(df)
+        df["Topics"]   = text.map(classify)
+        df["AnyTopic"] = text.map(any_topic)
     return df
 
 
@@ -470,7 +508,12 @@ def topic_vote_breakdown(topic: str, all_votes: pd.DataFrame,
 # ── Topic-level helpers ───────────────────────────────────────────────────────
 
 def get_topic_groupkeys(all_votes: pd.DataFrame, topic: str) -> set:
-    """GroupKeys whose BizTitle/Subject/TagName match a topic's keywords."""
+    """GroupKeys for votes whose affair is tagged with the given Curia Vista topic."""
+    lookup = _biz_tag_lookup()
+    if lookup and "BizNumber" in all_votes.columns:
+        matching_bns = {bn for bn, tags in lookup.items() if topic in tags}
+        return set(all_votes.loc[all_votes["BizNumber"].isin(matching_bns), "GroupKey"].unique())
+    # Fallback: keyword matching
     from topics import TOPICS
     import re as _re
     kws = TOPICS.get(topic, [])

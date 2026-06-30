@@ -11,11 +11,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from db import init_db, db_stats, DB_PATH, get_conn
-from scraper import full_scrape, update_scrape, scrape_sr_votes_direct, backfill_meaning
+from scraper import full_scrape, update_scrape, scrape_sr_votes_direct, backfill_meaning, backfill_biz_tags
 from analysis import (
     load_members, load_votes_for_mp, load_all_votes, load_votes_for_fraction,
     load_sessions,
-    tag_topics, filter_by_topic,
+    tag_topics, filter_by_topic, load_available_tags,
     mp_deviation, deviation_score, topic_deviation,
     compute_fraction_positions, deviation_alignment_fast, fraction_direction_heatmap,
     fraction_majority_strength,
@@ -29,20 +29,34 @@ from topics import TOPICS
 import summarizer
 
 TOPIC_EMOJI = {
-    "Aussenpolitik & Entwicklung":  "🌍",
-    "Bildung & Forschung":          "📚",
-    "Demokratie & Institutionen":   "🏛️",
-    "Digitalisierung & Medien":     "💻",
-    "Finanzen & Steuern":           "💶",
-    "Infrastruktur & Verkehr":      "🏗️",
-    "Klima & Energie":              "🌱",
-    "Landwirtschaft & Ernährung":   "🌾",
-    "Migration & Integration":      "🧭",
-    "Nachhaltigkeit & ESG":         "♻️",
-    "Sicherheit & Justiz":          "⚖️",
-    "Soziales & Gesundheit":        "🏥",
-    "Umwelt & Biodiversität":       "🌿",
-    "Wirtschaft & Arbeit":          "💼",
+    "Staatspolitik":                 "🏛️",
+    "Internationale Politik":        "🌍",
+    "Sicherheitspolitik":            "🛡️",
+    "Europapolitik":                 "🇪🇺",
+    "Recht Allgemein":               "📋",
+    "Wirtschaft":                    "💼",
+    "Finanzwesen":                   "💶",
+    "Soziale Fragen":                "🤝",
+    "Bildung":                       "📚",
+    "Medien und Kommunikation":      "📡",
+    "Wissenschaft und Forschung":    "🔬",
+    "Beschäftigung und Arbeit":      "👷",
+    "Verkehr":                       "🚆",
+    "Umwelt":                        "🌿",
+    "Landwirtschaft":                "🌾",
+    "Energie":                       "⚡",
+    "Parlament":                     "🗳️",
+    "Zivilrecht":                    "⚖️",
+    "Strafrecht":                    "🔏",
+    "Gerichtswesen":                 "🏛️",
+    "Internationales Recht":         "🌐",
+    "Menschenrechte":                "🕊️",
+    "Steuer":                        "💰",
+    "Migration":                     "🧭",
+    "Kultur":                        "🎭",
+    "Sozialer Schutz":               "🏥",
+    "Gesundheit":                    "💊",
+    "Raumplanung und Wohnungswesen": "🏗️",
 }
 
 # ── Fraction label helpers ────────────────────────────────────────────────────
@@ -205,7 +219,7 @@ def get_topic_fraction_cohesion():
     m  = get_members()
     active_dec = ["Ja", "Nein", "Enthaltung"]
     rows = []
-    for topic_name in TOPICS.keys():
+    for topic_name in load_available_tags():
         gks = get_topic_groupkeys(av, topic_name)
         t_votes = av[av["GroupKey"].isin(gks)]
         for frac in FRAC_ORDER:
@@ -677,6 +691,16 @@ Bei knapper Mehrheit (z.B. 52%) ist eine abweichende Stimme weniger auffällig a
 st.sidebar.title("🏛️ Wer stimmt wie?")
 check_api_key()
 
+with st.sidebar.expander("⚙️ Daten", expanded=False):
+    if st.button("Themen-Tags laden (Curia Vista)", key="btn_biz_tags"):
+        with st.spinner("Lade Themen-Tags von parlament.ch…"):
+            try:
+                n = backfill_biz_tags(log=lambda m: None)
+                st.success(f"{n} neue Geschäfte getaggt.")
+                st.cache_data.clear()
+            except Exception as _e:
+                st.error(str(_e))
+
 _pages = ["Home", "Fraktion", "Mitglied", "Thema", "Geschäft"]
 
 # URL is source of truth for page and detail state (survives browser reload/back)
@@ -895,7 +919,7 @@ elif page == "Thema":
     st.markdown(
         "Wähle ein politisches Thema und sieh, wie geschlossen die Fraktionen abstimmten "
         "und welche Parlamentsmitglieder am häufigsten von der eigenen Fraktionslinie abwichen. "
-        "Die Themen werden anhand von Stichwörtern in Titel und Geschäftsnummern klassifiziert."
+        "Die Themen entsprechen den offiziellen Kategorien von Curia Vista (parlament.ch)."
     )
 
     members   = get_members()
@@ -904,7 +928,7 @@ elif page == "Thema":
         no_data_stop()
 
     # ── Topic selector ────────────────────────────────────────────────────
-    _topic_opts = ["— Thema auswählen —"] + list(TOPICS.keys())
+    _topic_opts = ["— Thema auswählen —"] + load_available_tags()
     _topic_sel  = st.selectbox("🔍 Thema wählen", _topic_opts, key="thema_sel")
 
     # ── Thema × Fraktion cohesion heatmap (only when none selected) ───────
@@ -1671,7 +1695,7 @@ elif page == "Mitglied":
             frac_strength = fraction_majority_strength(combined, members, frac)
             deviated["Fraktionsmehrheit"] = deviated["GroupKey"].map(frac_strength).fillna("—")
 
-            _all_topics = sorted(TOPICS.keys())
+            _all_topics = load_available_tags()
             _other_fracs = [f for f in FRAC_ORDER if f != frac and f in positions.columns]
 
             # Staging flag: reset all topic checkboxes to True before the form renders
@@ -1686,18 +1710,14 @@ elif page == "Mitglied":
             _sorted_topics = sorted(_all_topics, key=lambda t: _topic_share[t], reverse=True)
             _alpha_idx = {t: i for i, t in enumerate(_all_topics)}
 
-            # Streamlit color names closest to each party's brand color
-            _frac_md_color = {
-                "RL": "blue", "S": "red", "V": "green",
-                "G": "green", "GL": "violet", "M-E": "orange", "BD": "gray",
-            }
-
             with st.form("dev_filters"):
                 _tc1, _tc2, _tc3, _tfc = st.columns([3, 3, 3, 2])
                 _topic_sel = []
+                _k = (len(_sorted_topics) + 2) // 3  # split into 3 roughly equal chunks
                 for _col, _chunk in zip([_tc1, _tc2, _tc3],
-                                        [_sorted_topics[0:5], _sorted_topics[5:10],
-                                         _sorted_topics[10:14]]):
+                                        [_sorted_topics[0:_k],
+                                         _sorted_topics[_k:2*_k],
+                                         _sorted_topics[2*_k:]]):
                     for _t in _chunk:
                         _lbl = f"{TOPIC_EMOJI.get(_t,'')} {_t} ({_topic_share[_t]:.1f}%)"
                         if _col.checkbox(_lbl, value=True, key=f"dev_topic_{_alpha_idx[_t]}"):
@@ -1706,9 +1726,7 @@ elif page == "Mitglied":
                     st.markdown("**Mit Fraktion**")
                     _frac_sel = []
                     for _f in _other_fracs:
-                        _c = _frac_md_color.get(_f, "")
-                        _lbl = f":{_c}[{frac_label(_f)}]" if _c else frac_label(_f)
-                        if st.checkbox(_lbl, value=True, key=f"dev_frac_form_{_f}"):
+                        if st.checkbox(frac_label(_f), value=True, key=f"dev_frac_form_{_f}"):
                             _frac_sel.append(_f)
                 _btn1, _btn2 = st.columns([1, 2])
                 _btn1.form_submit_button("Anwenden")
@@ -1719,7 +1737,7 @@ elif page == "Mitglied":
                 st.rerun()
 
             _dev_show = deviated.copy()
-            if _topic_sel and len(_topic_sel) < len(_all_topics):
+            if _topic_sel and len(_topic_sel) < len(_sorted_topics):
                 _tagged   = tag_topics(_dev_show)
                 _dev_show = _tagged[_tagged["Topics"].map(
                     lambda ts: bool(set(ts) & set(_topic_sel))
@@ -1839,7 +1857,7 @@ elif page == "Mitglied":
 
     # ── Full vote history ─────────────────────────────────────────────────
     with st.expander("Alle Abstimmungen"):
-        topic_f = st.selectbox("Thema", ["Alle"] + list(TOPICS.keys()), key="mp_full_topic")
+        topic_f = st.selectbox("Thema", ["Alle"] + load_available_tags(), key="mp_full_topic")
         show = (
             filter_by_topic(tag_topics(mp_votes), topic_f)
             if topic_f != "Alle" else mp_votes
