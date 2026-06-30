@@ -1657,14 +1657,41 @@ elif page == "Mitglied":
             _all_topics = sorted(TOPICS.keys())
             _other_fracs = [f for f in FRAC_ORDER if f != frac and f in positions.columns]
 
-            _fc1, _fc2 = st.columns(2)
-            _topic_sel = _fc1.multiselect(
-                "Thema", options=_all_topics, default=_all_topics, key="dev_topic_ms",
-            )
-            _frac_sel = _fc2.multiselect(
-                "Mit Fraktion", options=_other_fracs, default=_other_fracs,
-                format_func=frac_label, key="dev_frac_ms",
-            )
+            st.markdown("""
+<style>
+[data-testid="stForm"] [data-testid="stColumn"]:nth-child(1) [data-baseweb="tag"] {
+    background-color: rgba(0,160,190,0.15) !important;
+    border-color: rgba(0,160,190,0.4) !important;
+}
+[data-testid="stForm"] [data-testid="stColumn"]:nth-child(1) [data-baseweb="tag"] span:first-child {
+    color: rgb(0,100,135) !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    max-width: none !important;
+}
+[data-testid="stForm"] [data-testid="stColumn"]:nth-child(2) [data-baseweb="tag"] {
+    background-color: rgba(246,51,102,0.12) !important;
+    border-color: rgba(246,51,102,0.35) !important;
+}
+[data-testid="stForm"] [data-testid="stColumn"]:nth-child(2) [data-baseweb="tag"] span:first-child {
+    color: rgb(180,20,60) !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    max-width: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+            with st.form("dev_filters"):
+                _fc1, _fc2 = st.columns(2)
+                _topic_sel = _fc1.multiselect(
+                    "Thema", options=_all_topics, default=_all_topics, key="dev_topic_ms",
+                )
+                _frac_sel = _fc2.multiselect(
+                    "Mit Fraktion", options=_other_fracs, default=_other_fracs,
+                    format_func=frac_label, key="dev_frac_ms",
+                )
+                st.form_submit_button("Anwenden")
 
             _dev_show = deviated.copy()
             if _topic_sel and len(_topic_sel) < len(_all_topics):
