@@ -1692,8 +1692,19 @@ elif page == "Mitglied":
                         if _col.checkbox(_lbl, value=True, key=f"dev_topic_{_alpha_idx[_t]}"):
                             _topic_sel.append(_t)
                 with _tfc:
+                    # CSS: color each party's multiselect tag using aria-label on the close button.
+                    # SVP rule must come after SP rule to override (SVP label contains "SP").
+                    _frac_css = "".join(
+                        f"[data-baseweb='tag']:has([aria-label*='{frac_label(f)}'])"
+                        f"{{background:color-mix(in srgb,{FRAC_COLORS[f]} 18%,transparent)!important;"
+                        f"border-color:{FRAC_COLORS[f]}88!important}}"
+                        f"[data-baseweb='tag']:has([aria-label*='{frac_label(f)}']) span:first-child"
+                        f"{{color:{FRAC_COLORS[f]}!important}}"
+                        for f in ["G", "RL", "M-E", "GL", "S", "V"]  # V/SVP last → overrides S/SP
+                    )
+                    st.markdown(f"<style>{_frac_css}</style>", unsafe_allow_html=True)
                     st.markdown(
-                        "<p style='color:#f63366;font-weight:600;margin:0 0 4px'>Mit Fraktion</p>",
+                        "<p style='color:#555;font-weight:600;margin:0 0 4px'>Mit Fraktion</p>",
                         unsafe_allow_html=True,
                     )
                     _frac_sel = st.multiselect(
