@@ -954,7 +954,7 @@ elif page == "Thema":
                 yaxis_title="",
                 coloraxis_colorbar=dict(title="Kohäsion (%)"),
                 margin=dict(l=10, r=10, t=10, b=10),
-                height=420,
+                height=max(420, len(_pivot) * 32),
             )
             st.plotly_chart(_fig_hm, use_container_width=True)
             st.caption(
@@ -1698,42 +1698,55 @@ elif page == "Mitglied":
             _all_topics = load_available_tags()
             _other_fracs = [f for f in FRAC_ORDER if f != frac and f in positions.columns]
 
-            # Staging flag: reset all topic checkboxes to True before the form renders
-            if st.session_state.pop("_dev_topic_reset", False):
-                for _ci in range(len(_all_topics)):
-                    st.session_state[f"dev_topic_{_ci}"] = True
-
             # Reuse topic_dev (already computed above) — same metric as "Abweichungsrate nach Thema"
             _topic_share = {row["Thema"]: row["Abweichung (%)"] for _, row in topic_dev.iterrows()}
             for _t in _all_topics:
                 _topic_share.setdefault(_t, 0.0)
             _sorted_topics = sorted(_all_topics, key=lambda t: _topic_share[t], reverse=True)
-            _alpha_idx = {t: i for i, t in enumerate(_all_topics)}
+
+            # Staging flags for select-all / clear-all buttons (set before widgets render)
+            if st.session_state.pop("_dev_topic_reset", False):
+                st.session_state["dev_topics_ms"] = []
+            if st.session_state.pop("_dev_topic_all", False):
+                st.session_state["dev_topics_ms"] = _sorted_topics
+            if st.session_state.pop("_dev_frac_reset", False):
+                st.session_state["dev_fracs_ms"] = []
+            if st.session_state.pop("_dev_frac_all", False):
+                st.session_state["dev_fracs_ms"] = _other_fracs
 
             with st.form("dev_filters"):
-                _tc1, _tc2, _tc3, _tfc = st.columns([3, 3, 3, 2])
-                _topic_sel = []
-                _k = (len(_sorted_topics) + 2) // 3  # split into 3 roughly equal chunks
-                for _col, _chunk in zip([_tc1, _tc2, _tc3],
-                                        [_sorted_topics[0:_k],
-                                         _sorted_topics[_k:2*_k],
-                                         _sorted_topics[2*_k:]]):
-                    for _t in _chunk:
-                        _lbl = f"{TOPIC_EMOJI.get(_t,'')} {_t} ({_topic_share[_t]:.1f}%)"
-                        if _col.checkbox(_lbl, value=True, key=f"dev_topic_{_alpha_idx[_t]}"):
-                            _topic_sel.append(_t)
-                with _tfc:
-                    st.markdown("**Mit Fraktion**")
-                    _frac_sel = []
-                    for _f in _other_fracs:
-                        if st.checkbox(frac_label(_f), value=True, key=f"dev_frac_form_{_f}"):
-                            _frac_sel.append(_f)
-                _btn1, _btn2 = st.columns([1, 2])
-                _btn1.form_submit_button("Anwenden")
-                _cleared = _btn2.form_submit_button("× Themen zurücksetzen")
+                _fc1, _fc2 = st.columns([3, 1])
+                with _fc1:
+                    _topic_sel = st.multiselect(
+                        "Themen",
+                        options=_sorted_topics,
+                        default=_sorted_topics,
+                        key="dev_topics_ms",
+                        format_func=lambda t: f"{TOPIC_EMOJI.get(t,'')} {t} ({_topic_share[t]:.1f}%)",
+                    )
+                with _fc2:
+                    _frac_sel = st.multiselect(
+                        "Mit Fraktion",
+                        options=_other_fracs,
+                        default=_other_fracs,
+                        key="dev_fracs_ms",
+                        format_func=frac_label,
+                    )
+                _btn_cols = st.columns([1, 1, 1, 1, 2])
+                _btn_cols[0].form_submit_button("Anwenden")
 
-            if _cleared:
+            _rc1, _rc2, _rc3, _rc4 = st.columns([1, 1, 1, 1])
+            if _rc1.button("Themen: alle", key="topic_sel_all"):
+                st.session_state["_dev_topic_all"] = True
+                st.rerun()
+            if _rc2.button("Themen: keine", key="topic_sel_none"):
                 st.session_state["_dev_topic_reset"] = True
+                st.rerun()
+            if _rc3.button("Fraktionen: alle", key="frac_sel_all"):
+                st.session_state["_dev_frac_all"] = True
+                st.rerun()
+            if _rc4.button("Fraktionen: keine", key="frac_sel_none"):
+                st.session_state["_dev_frac_reset"] = True
                 st.rerun()
 
             _dev_show = deviated.copy()
