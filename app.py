@@ -28,6 +28,23 @@ from analysis import (
 from topics import TOPICS
 import summarizer
 
+TOPIC_EMOJI = {
+    "Aussenpolitik & Entwicklung":  "🌍",
+    "Bildung & Forschung":          "📚",
+    "Demokratie & Institutionen":   "🏛️",
+    "Digitalisierung & Medien":     "💻",
+    "Finanzen & Steuern":           "💶",
+    "Infrastruktur & Verkehr":      "🏗️",
+    "Klima & Energie":              "🌱",
+    "Landwirtschaft & Ernährung":   "🌾",
+    "Migration & Integration":      "🧭",
+    "Nachhaltigkeit & ESG":         "♻️",
+    "Sicherheit & Justiz":          "⚖️",
+    "Soziales & Gesundheit":        "🏥",
+    "Umwelt & Biodiversität":       "🌿",
+    "Wirtschaft & Arbeit":          "💼",
+}
+
 # ── Fraction label helpers ────────────────────────────────────────────────────
 
 FRAC_NAMES = {
@@ -1657,41 +1674,70 @@ elif page == "Mitglied":
             _all_topics = sorted(TOPICS.keys())
             _other_fracs = [f for f in FRAC_ORDER if f != frac and f in positions.columns]
 
-            st.markdown("""
-<style>
-[data-testid="stForm"] [data-testid="stColumn"]:nth-child(1) [data-baseweb="tag"] {
-    background-color: rgba(0,160,190,0.15) !important;
-    border-color: rgba(0,160,190,0.4) !important;
-}
-[data-testid="stForm"] [data-testid="stColumn"]:nth-child(1) [data-baseweb="tag"] span:first-child {
-    color: rgb(0,100,135) !important;
-    white-space: normal !important;
-    overflow: visible !important;
-    max-width: none !important;
-}
-[data-testid="stForm"] [data-testid="stColumn"]:nth-child(2) [data-baseweb="tag"] {
-    background-color: rgba(246,51,102,0.12) !important;
-    border-color: rgba(246,51,102,0.35) !important;
-}
-[data-testid="stForm"] [data-testid="stColumn"]:nth-child(2) [data-baseweb="tag"] span:first-child {
-    color: rgb(180,20,60) !important;
-    white-space: normal !important;
-    overflow: visible !important;
-    max-width: none !important;
-}
-</style>
-""", unsafe_allow_html=True)
+            # Per-topic deviation rates for the bar chart
+            _tagged_comb = tag_topics(combined)
+            _tagged_devv = tag_topics(deviated)
+            _topic_rate  = {}
+            for _t in _all_topics:
+                _tot = int(_tagged_comb["Topics"].map(lambda ts, t=_t: t in ts).sum())
+                _dv  = int(_tagged_devv["Topics"].map(lambda ts, t=_t: t in ts).sum())
+                _topic_rate[_t] = (_dv / _tot * 100) if _tot > 0 else 0.0
 
-            with st.form("dev_filters"):
-                _fc1, _fc2 = st.columns(2)
-                _topic_sel = _fc1.multiselect(
-                    "Thema", options=_all_topics, default=_all_topics, key="dev_topic_ms",
+            # Selection state (default: all included)
+            _tsel_key = "dev_topic_set"
+            if _tsel_key not in st.session_state:
+                st.session_state[_tsel_key] = set(_all_topics)
+            _sel_topics = st.session_state[_tsel_key]
+
+            # Build horizontal bar chart (bottom-to-top = alphabetical top-to-bottom)
+            _topics_rev = list(reversed(_all_topics))
+            _ylabels    = [f"{TOPIC_EMOJI.get(t,'')} {t}" for t in _topics_rev]
+            _xvals      = [_topic_rate[t] for t in _topics_rev]
+
+            def _bar_color(t, rate):
+                if t not in _sel_topics:
+                    return "rgba(180,180,180,0.22)"
+                v = min(1.0, rate / 25.0)
+                return f"rgb(255,{int(210-170*v)},{int(160-150*v)})"
+
+            _tbar_fig = go.Figure(go.Bar(
+                x=_xvals, y=_ylabels, orientation="h",
+                marker_color=[_bar_color(t, _topic_rate[t]) for t in _topics_rev],
+                customdata=[[t] for t in _topics_rev],
+                hovertemplate="%{y}: %{x:.1f}%<extra></extra>",
+            ))
+            _tbar_fig.update_layout(
+                height=420, margin=dict(l=0, r=10, t=4, b=30),
+                xaxis=dict(title="Abweichungsrate (%)",
+                           range=[0, max(max(_xvals) * 1.25, 5)]),
+                yaxis=dict(tickfont=dict(size=11)),
+                dragmode=False,
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            )
+
+            _fc1, _fc2 = st.columns([3, 1])
+            with _fc1:
+                st.caption("Thema anklicken um es ein-/auszuschliessen")
+                _tev = st.plotly_chart(
+                    _tbar_fig, use_container_width=True,
+                    on_select="rerun", key="dev_topic_chart",
                 )
-                _frac_sel = _fc2.multiselect(
-                    "Mit Fraktion", options=_other_fracs, default=_other_fracs,
-                    format_func=frac_label, key="dev_frac_ms",
-                )
-                st.form_submit_button("Anwenden")
+                if _tev and _tev.selection and _tev.selection.points:
+                    _clicked = _tev.selection.points[0]["customdata"][0]
+                    _new_sel = set(_sel_topics)
+                    _new_sel.discard(_clicked) if _clicked in _new_sel else _new_sel.add(_clicked)
+                    st.session_state[_tsel_key] = _new_sel
+                    st.rerun()
+
+            with _fc2:
+                with st.form("dev_frac_form"):
+                    _frac_sel = st.multiselect(
+                        "Mit Fraktion", options=_other_fracs, default=_other_fracs,
+                        format_func=frac_label, key="dev_frac_ms",
+                    )
+                    st.form_submit_button("Anwenden")
+
+            _topic_sel = list(_sel_topics)
 
             _dev_show = deviated.copy()
             if _topic_sel and len(_topic_sel) < len(_all_topics):
@@ -1707,7 +1753,39 @@ elif page == "Mitglied":
                         _frac_mask = _frac_mask | (_dev_show["DecisionNorm"] == _maj)
                 _dev_show = _dev_show[_frac_mask]
 
-            vote_table(_dev_show, extra_cols=["Fraktionsmehrheit"])
+            # Inline table with row-click → Geschäft navigation
+            _dv_disp = _dev_show.copy()
+            _dv_disp["🔗"] = _dv_disp.apply(
+                lambda r: _make_curia_url(r.get("BizShort",""), r.get("BizNumber","")), axis=1
+            )
+            _dv_cols = [c for c in ["MeetingDate","BizShort","Subject","BizTitle",
+                                     "DecisionNorm","Fraktionsmehrheit","🔗"]
+                        if c in _dv_disp.columns]
+            _dv_disp = (
+                _dv_disp[_dv_cols]
+                .rename(columns={"MeetingDate":"Datum","BizShort":"Geschäft",
+                                  "Subject":"Frage","BizTitle":"Titel",
+                                  "DecisionNorm":"Entscheid"})
+                .sort_values("Datum", ascending=False)
+                .reset_index(drop=True)
+            )
+            _dv_ev = st.dataframe(
+                _dv_disp,
+                column_config={"🔗": st.column_config.LinkColumn("Curia Vista", display_text="↗")},
+                use_container_width=True, height=400,
+                on_select="rerun", selection_mode="single-row",
+                key="dev_table_sel",
+            )
+            if _dv_ev.selection.rows:
+                _sel_biz = str(_dv_disp.iloc[_dv_ev.selection.rows[0]]["Geschäft"])
+                _href_biz = "?" + urlencode({"page": "Geschäft", "q": _sel_biz})
+                st.markdown(
+                    f'<a href="{_href_biz}" target="_self" style="display:inline-block;'
+                    f'padding:0.35rem 0.7rem;background:#f63366;color:white;'
+                    f'border-radius:0.3rem;text-decoration:none;font-size:0.875rem;'
+                    f'font-weight:500;">→ Geschäft {_sel_biz}</a>',
+                    unsafe_allow_html=True,
+                )
         else:
             st.info("Keine Abweichungen gefunden.")
 
