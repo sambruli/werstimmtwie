@@ -1657,43 +1657,14 @@ elif page == "Mitglied":
             _all_topics = sorted(TOPICS.keys())
             _other_fracs = [f for f in FRAC_ORDER if f != frac and f in positions.columns]
 
-            # Master "Alle/Keine" toggle: propagate to individual topic checkboxes before they render
-            _mkey  = "dev_topic_master"
-            _mprev = "_dev_topic_master_prev"
-            _cur_master  = st.session_state.get(_mkey, True)
-            _prev_master = st.session_state.get(_mprev, True)
-            if _cur_master != _prev_master:
-                for _mi in range(len(_all_topics)):
-                    st.session_state[f"dev_topic_{_mi}"] = _cur_master
-            st.session_state[_mprev] = _cur_master
-
-            st.checkbox("Alle / Keine", value=True, key=_mkey)
-
-            # 4-column layout: 3 topic cols (5+5+4) | thin divider | faction col
-            _tc1, _tc2, _tc3, _tdiv, _tfc = st.columns([3, 3, 3, 0.08, 2])
-
-            _topic_sel = []
-            _topic_splits = [range(0, 5), range(5, 10), range(10, 14)]
-            for _col, _rng in zip([_tc1, _tc2, _tc3], _topic_splits):
-                for _ti in _rng:
-                    if _col.checkbox(_all_topics[_ti], value=True, key=f"dev_topic_{_ti}"):
-                        _topic_sel.append(_all_topics[_ti])
-
-            _tdiv.markdown(
-                "<div style='border-left:2px solid rgba(150,150,150,0.35);"
-                "min-height:220px;margin-top:4px'></div>",
-                unsafe_allow_html=True,
+            _fc1, _fc2 = st.columns(2)
+            _topic_sel = _fc1.multiselect(
+                "Thema", options=_all_topics, default=_all_topics, key="dev_topic_ms",
             )
-
-            with _tfc:
-                st.markdown(
-                    "<p style='color:#f63366;font-weight:700;margin:0 0 2px'>Mit Fraktion</p>",
-                    unsafe_allow_html=True,
-                )
-                _frac_sel = [
-                    f for f in _other_fracs
-                    if st.checkbox(frac_label(f), value=True, key=f"dev_frac_{f}")
-                ]
+            _frac_sel = _fc2.multiselect(
+                "Mit Fraktion", options=_other_fracs, default=_other_fracs,
+                format_func=frac_label, key="dev_frac_ms",
+            )
 
             _dev_show = deviated.copy()
             if _topic_sel and len(_topic_sel) < len(_all_topics):
