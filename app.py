@@ -687,7 +687,7 @@ for _p in _pages:
     _href = "?" + urlencode({"page": _p})
     if _p == page:
         _nav_html.append(
-            f'<a href="{_href}" style="display:block;padding:0.45rem 0.75rem 0.45rem 0.65rem;'
+            f'<a href="{_href}" target="_self" style="display:block;padding:0.45rem 0.75rem 0.45rem 0.65rem;'
             f'background:rgba(255,255,255,0.18);font-weight:700;'
             f'border-left:3px solid #f63366;border-radius:0.4rem;'
             f'margin:0 0 2px 0;font-size:1rem;line-height:1.6;'
@@ -695,7 +695,7 @@ for _p in _pages:
         )
     else:
         _nav_html.append(
-            f'<a href="{_href}" style="display:block;padding:0.45rem 0.9rem;'
+            f'<a href="{_href}" target="_self" style="display:block;padding:0.45rem 0.9rem;'
             f'border-radius:0.4rem;margin:0 0 2px 0;font-size:1rem;line-height:1.6;'
             f'color:inherit;text-decoration:none;" '
             f'onmouseover="this.style.background=\'rgba(255,255,255,0.08)\'" '
