@@ -1674,12 +1674,23 @@ elif page == "Mitglied":
             _all_topics = sorted(TOPICS.keys())
             _other_fracs = [f for f in FRAC_ORDER if f != frac and f in positions.columns]
 
+            # Staging flag: reset all topic checkboxes to True before the form renders
+            if st.session_state.pop("_dev_topic_reset", False):
+                for _ci in range(len(_all_topics)):
+                    st.session_state[f"dev_topic_{_ci}"] = True
+
             # Reuse topic_dev (already computed above) — same metric as "Abweichungsrate nach Thema"
             _topic_share = {row["Thema"]: row["Abweichung (%)"] for _, row in topic_dev.iterrows()}
             for _t in _all_topics:
                 _topic_share.setdefault(_t, 0.0)
             _sorted_topics = sorted(_all_topics, key=lambda t: _topic_share[t], reverse=True)
             _alpha_idx = {t: i for i, t in enumerate(_all_topics)}
+
+            # Streamlit color names closest to each party's brand color
+            _frac_md_color = {
+                "RL": "blue", "S": "red", "V": "green",
+                "G": "green", "GL": "violet", "M-E": "orange", "BD": "gray",
+            }
 
             with st.form("dev_filters"):
                 _tc1, _tc2, _tc3, _tfc = st.columns([3, 3, 3, 2])
@@ -1692,33 +1703,19 @@ elif page == "Mitglied":
                         if _col.checkbox(_lbl, value=True, key=f"dev_topic_{_alpha_idx[_t]}"):
                             _topic_sel.append(_t)
                 with _tfc:
-                    # CSS: color each party's multiselect tag using aria-label on the close button.
-                    # SVP rule must come after SP rule to override (SVP label contains "SP").
-                    _frac_css = "".join(
-                        f"[data-baseweb='tag']:has([aria-label*='{frac_label(f)}'])"
-                        f"{{background:color-mix(in srgb,{FRAC_COLORS[f]} 18%,transparent)!important;"
-                        f"border-color:{FRAC_COLORS[f]}88!important}}"
-                        f"[data-baseweb='tag']:has([aria-label*='{frac_label(f)}']) span:first-child"
-                        f"{{color:{FRAC_COLORS[f]}!important}}"
-                        for f in ["G", "RL", "M-E", "GL", "S", "V"]  # V/SVP last → overrides S/SP
-                    )
-                    st.markdown(f"<style>{_frac_css}</style>", unsafe_allow_html=True)
-                    st.markdown(
-                        "<p style='color:#555;font-weight:600;margin:0 0 4px'>Mit Fraktion</p>",
-                        unsafe_allow_html=True,
-                    )
-                    _frac_sel = st.multiselect(
-                        "", options=_other_fracs, default=_other_fracs,
-                        format_func=frac_label, key="dev_frac_ms",
-                        label_visibility="collapsed",
-                    )
+                    st.markdown("**Mit Fraktion**")
+                    _frac_sel = []
+                    for _f in _other_fracs:
+                        _c = _frac_md_color.get(_f, "")
+                        _lbl = f":{_c}[{frac_label(_f)}]" if _c else frac_label(_f)
+                        if st.checkbox(_lbl, value=True, key=f"dev_frac_form_{_f}"):
+                            _frac_sel.append(_f)
                 _btn1, _btn2 = st.columns([1, 2])
-                _submitted = _btn1.form_submit_button("Anwenden")
-                _cleared   = _btn2.form_submit_button("× Themen zurücksetzen")
+                _btn1.form_submit_button("Anwenden")
+                _cleared = _btn2.form_submit_button("× Themen zurücksetzen")
 
             if _cleared:
-                for _ci in range(len(_all_topics)):
-                    st.session_state[f"dev_topic_{_ci}"] = True
+                st.session_state["_dev_topic_reset"] = True
                 st.rerun()
 
             _dev_show = deviated.copy()
