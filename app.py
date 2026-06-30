@@ -1655,30 +1655,31 @@ elif page == "Mitglied":
             deviated["Fraktionsmehrheit"] = deviated["GroupKey"].map(frac_strength).fillna("—")
 
             _tf1, _tf2 = st.columns(2)
-            _topic_opts = ["Alle Themen"] + sorted(TOPICS.keys())
-            _topic_sel  = _tf1.selectbox("Thema", _topic_opts, key="dev_topic_filter")
-            _other_fracs = [f for f in FRAC_ORDER if f != frac
-                            and f in positions["FractionAbbr"].values]
-            _frac_with_opts  = ["Alle Fraktionen"] + [frac_label(f) for f in _other_fracs]
-            _frac_with_sel   = _tf2.selectbox(
-                "Gestimmt mit Fraktion", _frac_with_opts, key="dev_frac_filter"
+            _all_topics  = sorted(TOPICS.keys())
+            _topic_sel   = _tf1.multiselect(
+                "Thema", _all_topics, default=_all_topics, key="dev_topic_filter"
             )
+            _other_fracs = [f for f in FRAC_ORDER if f != frac and f in positions.columns]
+            with _tf2:
+                st.markdown("**Gestimmt mit Fraktion**")
+                _frac_sel = [
+                    f for f in _other_fracs
+                    if st.checkbox(frac_label(f), value=True, key=f"dev_frac_{f}")
+                ]
 
             _dev_show = deviated.copy()
-            if _topic_sel != "Alle Themen":
-                _dev_show = filter_by_topic(tag_topics(_dev_show), _topic_sel)
-            if _frac_with_sel != "Alle Fraktionen":
-                _sel_frac_abbr = _other_fracs[_frac_with_opts.index(_frac_with_sel) - 1]
-                _pos_f = (
-                    positions[positions["FractionAbbr"] == _sel_frac_abbr]
-                    [["GroupKey", "FracMajority"]]
-                    .rename(columns={"FracMajority": "_cmp"})
-                )
-                _dev_show = (
-                    _dev_show.merge(_pos_f, on="GroupKey", how="left")
-                    .pipe(lambda d: d[d["DecisionNorm"] == d["_cmp"]])
-                    .drop(columns=["_cmp"], errors="ignore")
-                )
+            if _topic_sel and len(_topic_sel) < len(_all_topics):
+                _tagged   = tag_topics(_dev_show)
+                _dev_show = _tagged[_tagged["Topics"].map(
+                    lambda ts: bool(set(ts) & set(_topic_sel))
+                )]
+            if 0 < len(_frac_sel) < len(_other_fracs):
+                _frac_mask = pd.Series(False, index=_dev_show.index)
+                for _sf in _frac_sel:
+                    if _sf in positions.columns:
+                        _maj = _dev_show["GroupKey"].map(positions[_sf])
+                        _frac_mask = _frac_mask | (_dev_show["DecisionNorm"] == _maj)
+                _dev_show = _dev_show[_frac_mask]
 
             vote_table(_dev_show, extra_cols=["Fraktionsmehrheit"])
         else:
