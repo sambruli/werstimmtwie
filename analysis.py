@@ -718,23 +718,35 @@ MAIN_FRACS = list(_FRAC_SCORE_MAP)
 
 # Canonical left-side frozenset → human-readable label
 COALITION_PATTERNS: dict[frozenset, str] = {
-    frozenset({"G", "S"}):                     "G+S vs GL+M-E+RL+V",
-    frozenset({"G", "S", "GL"}):               "G+S+GL vs M-E+RL+V",
-    frozenset({"G", "S", "GL", "M-E"}):        "G+S+GL+M-E vs RL+V",
-    frozenset({"G", "S", "GL", "RL"}):         "G+S+GL+RL vs M-E+V",
-    frozenset({"G", "S", "M-E"}):              "G+S+M-E vs GL+RL+V",
+    # Key = frozenset of the LEFT (lower-score) side fractions.
+    # Label: expected winner listed first, then " vs ", then expected loser.
+    frozenset({"G", "S"}):                     "GL+M-E+RL+V vs G+S",       # right wins
+    frozenset({"G", "S", "GL"}):               "M-E+RL+V vs G+S+GL",       # right wins
+    frozenset({"G", "S", "GL", "M-E"}):        "G+S+GL+M-E vs RL+V",       # left-centre wins
+    frozenset({"G", "S", "GL", "RL"}):         "G+S+GL+RL vs M-E+V",       # odd alliance wins
+    frozenset({"G", "S", "M-E"}):              "G+S+M-E vs GL+RL+V",       # left+M-E wins
     frozenset({"G", "S", "GL", "M-E", "RL"}): "Alle gegen SVP",
 }
 
+# Default display order; overridden at runtime by NR count descending.
 COALITION_ORDER = [
-    "G+S vs GL+M-E+RL+V",
-    "G+S+GL vs M-E+RL+V",
+    "Alle gegen SVP",
+    "GL+M-E+RL+V vs G+S",
+    "M-E+RL+V vs G+S+GL",
+    "Konsens",
     "G+S+GL+M-E vs RL+V",
     "G+S+GL+RL vs M-E+V",
     "G+S+M-E vs GL+RL+V",
-    "Alle gegen SVP",
-    "Konsens",
 ]
+
+# Direction a flip pushes the outcome (from the expected-winner's perspective).
+COALITION_FLIP_DIRECTION: dict[str, str] = {
+    "GL+M-E+RL+V vs G+S":   "nach links",
+    "M-E+RL+V vs G+S+GL":   "nach links",
+    "G+S+GL+M-E vs RL+V":   "nach rechts",
+    "G+S+GL+RL vs M-E+V":   "nach rechts",
+    "G+S+M-E vs GL+RL+V":   "nach rechts",
+}
 
 
 def classify_coalition(pos_row: pd.Series) -> tuple:

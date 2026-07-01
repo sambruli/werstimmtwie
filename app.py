@@ -24,7 +24,7 @@ from analysis import (
     get_topic_groupkeys, topic_deviators_all,
     search_geschaefte, geschaeft_votes_enriched,
     cross_chamber_mp, cross_chamber_fraction,
-    compute_coalition_data, COALITION_ORDER,
+    compute_coalition_data, COALITION_ORDER, COALITION_FLIP_DIRECTION,
 )
 from topics import TOPICS
 import summarizer
@@ -564,8 +564,21 @@ def navigate_to_geschaeft(biz_short: str):
     st.query_params["q"]    = str(biz_short)
     if "mp" in st.query_params:
         del st.query_params["mp"]
+    if "gk" in st.query_params:
+        del st.query_params["gk"]
     st.session_state["_geschaeft_goto"] = str(biz_short)
     st.session_state["nav_radio"]       = "Geschäft"
+    st.rerun()
+
+def navigate_to_abstimmung(biz_short: str, group_key: str):
+    st.query_params["page"] = "Geschäft"
+    st.query_params["q"]    = str(biz_short)
+    st.query_params["gk"]   = str(group_key)
+    if "mp" in st.query_params:
+        del st.query_params["mp"]
+    st.session_state["_geschaeft_goto"]  = str(biz_short)
+    st.session_state["_abstimmung_goto"] = str(group_key)
+    st.session_state["nav_radio"]        = "Geschäft"
     st.rerun()
 
 def _mp_click_nav(ev, key_suffix, members_df):
@@ -713,6 +726,9 @@ if _page_from_url in _pages:
     _q_param = st.query_params.get("q")
     if _q_param:
         st.session_state["_geschaeft_goto"] = _q_param
+    _gk_param = st.query_params.get("gk")
+    if _gk_param:
+        st.session_state["_abstimmung_goto"] = _gk_param
 
 if "nav_radio" not in st.session_state:
     st.session_state["nav_radio"] = "Home"
@@ -1067,6 +1083,8 @@ elif page == "Geschäft":
             _coal = get_coalition_data()
 
         if not _coal.empty:
+            from collections import Counter as _Counter
+
             # Trace config: (Chamber, Flipped, color, legend label)
             _TRACE_CFG = [
                 ("NR", False, "#1565C0", "NR — Koalition hält"),
@@ -1077,18 +1095,37 @@ elif page == "Geschäft":
             _agg = (_coal.groupby(["Koalitionstyp", "Chamber", "Flipped"])
                     .size().reset_index(name="n"))
 
+            # Order coalitions by total NR count descending
+            _nr_totals = (
+                _coal[_coal["Chamber"] == "NR"]
+                .groupby("Koalitionstyp").size()
+            )
+            _coal_order = sorted(
+                COALITION_ORDER,
+                key=lambda ct: _nr_totals.get(ct, 0),
+                reverse=True,
+            )
+
             _fig_coal = go.Figure()
             for _kammer, _flipped, _color, _name in _TRACE_CFG:
-                _sub = _agg[(_agg["Chamber"] == _kammer) & (_agg["Flipped"] == _flipped)]
+                _sub    = _agg[(_agg["Chamber"] == _kammer) & (_agg["Flipped"] == _flipped)]
                 _counts = dict(zip(_sub["Koalitionstyp"], _sub["n"]))
-                _ys = [_counts.get(ct, 0) for ct in COALITION_ORDER]
+                _ys     = [_counts.get(ct, 0) for ct in _coal_order]
+                # Show count label outside bar for small flipped segments
+                _texts  = (
+                    [str(y) if (y > 0 and y < 30) else "" for y in _ys]
+                    if _flipped else [""] * len(_ys)
+                )
                 _fig_coal.add_trace(go.Bar(
                     name=_name,
-                    x=COALITION_ORDER,
+                    x=_coal_order,
                     y=_ys,
                     offsetgroup=_kammer,
                     marker_color=_color,
-                    customdata=[[_kammer, _flipped, ct] for ct in COALITION_ORDER],
+                    text=_texts,
+                    textposition="outside",
+                    textfont=dict(size=10, color=_color),
+                    customdata=[[_kammer, _flipped, ct] for ct in _coal_order],
                     hovertemplate=(
                         "<b>%{x}</b><br>"
                         "%{y} Abstimmungen<br>"
@@ -1101,7 +1138,7 @@ elif page == "Geschäft":
                 height=520,
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
-                margin=dict(l=20, r=20, t=10, b=10),
+                margin=dict(l=20, r=20, t=40, b=10),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02,
                             xanchor="right", x=1, font=dict(size=11)),
                 bargap=0.25,
@@ -1130,7 +1167,7 @@ elif page == "Geschäft":
                 _sel_ct = _pt.get("x")
 
             # Filter data
-            _coal_show = _coal.copy()
+            _coal_show = _coal.copy().sort_values("MeetingDate", ascending=False)
             if _sel_ct:
                 _coal_show = _coal_show[_coal_show["Koalitionstyp"] == _sel_ct]
             if _sel_kammer:
@@ -1138,62 +1175,67 @@ elif page == "Geschäft":
             if _sel_flipped is not None:
                 _coal_show = _coal_show[_coal_show["Flipped"] == _sel_flipped]
 
-            # Top topics for selected segment
-            if _sel_ct and not _coal_show.empty:
-                from collections import Counter as _Counter
-                _all_tags = [t for t in
-                             list(_coal_show["Thema1"]) + list(_coal_show["Thema2"]) if t]
-                _top5 = _Counter(_all_tags).most_common(5)
-                if _top5:
-                    st.markdown(
-                        "**Häufigste Themen:** " +
-                        " · ".join(f"{t} ({n})" for t, n in _top5)
-                    )
-
-            # Abstimmungen table
-            _tbl_label = ""
+            # Info row above table
+            _info_parts = []
             if _sel_ct:
-                _tbl_label = (f"{_sel_ct}"
-                              + (f" · {_sel_kammer}" if _sel_kammer else "")
-                              + (" · Abweichler entscheidet" if _sel_flipped else
-                                 " · Koalition hält" if _sel_flipped is False else ""))
+                _info_parts.append(f"**{_sel_ct}**")
+            if _sel_kammer:
+                _info_parts.append(_sel_kammer)
+            if _sel_flipped is True:
+                _flip_dir = COALITION_FLIP_DIRECTION.get(_sel_ct or "", "")
+                _flip_str = f"Abweichler kippen Abstimmung {_flip_dir}" if _flip_dir else "Abweichler entscheidet"
+                _info_parts.append(_flip_str)
+            elif _sel_flipped is False:
+                _info_parts.append("Koalition hält")
+
+            # Top topics
+            _all_tags = [t for t in
+                         list(_coal_show["Thema1"]) + list(_coal_show["Thema2"]) if t]
+            _top5 = _Counter(_all_tags).most_common(5)
+            _topic_str = (" · ".join(f"{t} ({n})" for t, n in _top5)) if _top5 else ""
+
+            _header = " · ".join(_info_parts) if _info_parts else "Alle Abstimmungen"
             st.markdown(
-                f"**Abstimmungen** {('— ' + _tbl_label) if _tbl_label else '(alle)'}  "
-                f"*({len(_coal_show)})*"
+                f"**{_header}**  *({len(_coal_show)})*"
+                + (f"  —  {_topic_str}" if _topic_str and _sel_ct else "")
             )
 
+            # Table (no tick-box — no on_select)
             _tbl_df = (_coal_show[["BizShort", "MeetingDate", "Chamber",
-                                   "Koalitionstyp", "Flipped", "Subject",
-                                   "Thema1", "Thema2", "Margin"]]
-                       .copy()
-                       .sort_values("MeetingDate", ascending=False))
+                                   "Koalitionstyp", "Flipped", "Subject", "Margin",
+                                   "GroupKey"]]
+                       .copy())
             _tbl_df["Abweichler"] = _tbl_df["Flipped"].map({True: "✓", False: ""})
-            _tbl_df = _tbl_df.drop(columns=["Flipped"]).rename(columns={
+            _tbl_display = _tbl_df.drop(columns=["Flipped", "GroupKey"]).rename(columns={
                 "BizShort":      "Geschäft",
                 "MeetingDate":   "Datum",
                 "Chamber":       "Kammer",
                 "Koalitionstyp": "Koalition",
                 "Subject":       "Abstimmung",
-                "Thema1":        "Thema 1",
-                "Thema2":        "Thema 2",
                 "Margin":        "Differenz",
             })
-            _ev_coal_tbl = st.dataframe(
-                _tbl_df,
+            st.dataframe(
+                _tbl_display,
                 use_container_width=True,
                 hide_index=True,
-                on_select="rerun",
-                selection_mode="single-row",
-                key="coal_tbl",
             )
-            if (_ev_coal_tbl and _ev_coal_tbl.selection
-                    and _ev_coal_tbl.selection.rows):
-                _row_idx = _ev_coal_tbl.selection.rows[0]
-                _goto_bs = _coal_show.sort_values(
-                    "MeetingDate", ascending=False
-                ).iloc[_row_idx]["BizShort"]
-                if _goto_bs:
-                    navigate_to_geschaeft(_goto_bs)
+
+            # Navigation: selectbox + button below table
+            if not _coal_show.empty:
+                _nav_opts = [
+                    f"{row['BizShort']}  {str(row['Subject'] or '')[:70]}"
+                    for _, row in _coal_show.iterrows()
+                ]
+                _nav_sel = st.selectbox(
+                    "Abstimmung auswählen:",
+                    options=range(len(_nav_opts)),
+                    format_func=lambda i: _nav_opts[i],
+                    key="coal_nav_sel",
+                    label_visibility="collapsed",
+                )
+                if st.button("→ Zur Abstimmung", key="coal_nav_btn"):
+                    _nav_row = _coal_show.iloc[_nav_sel]
+                    navigate_to_abstimmung(_nav_row["BizShort"], _nav_row["GroupKey"])
         st.stop()
 
     with st.spinner("Suche…"):
@@ -1242,7 +1284,15 @@ elif page == "Geschäft":
         f"{row['MeetingDate'][:10]}  [{row.get('CouncilAbbr','?')}]  {str(row['Subject'] or '')[:80]}"
         for _, row in rollcalls.iterrows()
     ]
-    rc_sel = st.selectbox("Abstimmung auswählen", rc_labels, key="geschaeft_rc_sel")
+    # Pre-select a specific GroupKey if navigated from a direct link (e.g. coalition table)
+    _goto_gk = st.session_state.pop("_abstimmung_goto", None)
+    _rc_default = 0
+    if _goto_gk:
+        _gk_list = list(rollcalls["GroupKey"])
+        if _goto_gk in _gk_list:
+            _rc_default = _gk_list.index(_goto_gk)
+    rc_sel = st.selectbox("Abstimmung auswählen", rc_labels,
+                           index=_rc_default, key="geschaeft_rc_sel")
     sel_gk = rollcalls.iloc[rc_labels.index(rc_sel)]["GroupKey"]
 
     vote_detail = gv[gv["GroupKey"] == sel_gk].copy()
