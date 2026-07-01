@@ -707,3 +707,181 @@ def cross_chamber_fraction(fraction_abbr: str, all_votes: pd.DataFrame,
     df["Datum"]    = df.index.map(biz_dates)
     df["Einig"]    = df["NR"] == df["SR"]
     return df.reset_index().sort_values("Datum", ascending=False)
+
+
+# ── Organic coalition analysis ────────────────────────────────────────────────
+
+_FRAC_SCORE_MAP: dict[str, int] = {
+    "G": -3, "S": -2, "GL": -1, "M-E": 1, "RL": 2, "V": 3,
+}
+MAIN_FRACS = list(_FRAC_SCORE_MAP)
+
+# Canonical left-side frozenset → human-readable label
+COALITION_PATTERNS: dict[frozenset, str] = {
+    frozenset({"G", "S"}):                     "G+S vs GL+M-E+RL+V",
+    frozenset({"G", "S", "GL"}):               "G+S+GL vs M-E+RL+V",
+    frozenset({"G", "S", "GL", "M-E"}):        "G+S+GL+M-E vs RL+V",
+    frozenset({"G", "S", "GL", "RL"}):         "G+S+GL+RL vs M-E+V",
+    frozenset({"G", "S", "M-E"}):              "G+S+M-E vs GL+RL+V",
+    frozenset({"G", "S", "GL", "M-E", "RL"}): "Alle gegen SVP",
+}
+
+COALITION_ORDER = [
+    "G+S vs GL+M-E+RL+V",
+    "G+S+GL vs M-E+RL+V",
+    "G+S+GL+M-E vs RL+V",
+    "G+S+GL+RL vs M-E+V",
+    "G+S+M-E vs GL+RL+V",
+    "Alle gegen SVP",
+    "Konsens",
+]
+
+
+def classify_coalition(pos_row: pd.Series) -> tuple:
+    """
+    Classify a GroupKey into an organic coalition pattern.
+    Returns (label, lf, rf, lf_decision, rf_decision).
+    lf = frozenset of fractions on the politically-left side (lower FRAC_SCORE avg).
+    """
+    valid = {f: pos_row[f] for f in MAIN_FRACS
+             if f in pos_row.index and pd.notna(pos_row[f]) and pos_row[f] in ("Ja", "Nein")}
+    if len(valid) < 3:
+        return ("Andere", frozenset(), frozenset(), None, None)
+
+    ja_f  = frozenset(f for f, v in valid.items() if v == "Ja")
+    nei_f = frozenset(f for f, v in valid.items() if v == "Nein")
+    if not ja_f or not nei_f:
+        return ("Konsens", ja_f | nei_f, frozenset(), None, None)
+
+    ja_sc  = sum(_FRAC_SCORE_MAP.get(f, 0) for f in ja_f)  / len(ja_f)
+    nei_sc = sum(_FRAC_SCORE_MAP.get(f, 0) for f in nei_f) / len(nei_f)
+    lf = ja_f  if ja_sc  <= nei_sc else nei_f
+    rf = nei_f if ja_sc  <= nei_sc else ja_f
+    lf_dec = "Ja" if lf == ja_f else "Nein"
+    rf_dec = "Nein" if lf == ja_f else "Ja"
+
+    # Alle gegen SVP: V alone on either side, 3+ on the other
+    if lf == frozenset({"V"}) or rf == frozenset({"V"}):
+        if lf == frozenset({"V"}):           # normalise: lf = big coalition
+            lf, rf = rf, lf
+            lf_dec, rf_dec = rf_dec, lf_dec
+        return ("Alle gegen SVP", lf, rf, lf_dec, rf_dec)
+
+    # Konsens: 5+ fracs on one side (after SVP check so Alle-gegen-SVP isn't swallowed)
+    if len(lf) >= 5 or len(rf) >= 5:
+        return ("Konsens", lf, rf, lf_dec, rf_dec)
+
+    label = COALITION_PATTERNS.get(lf, COALITION_PATTERNS.get(rf, "Andere"))
+    return (label, lf, rf, lf_dec, rf_dec)
+
+
+def compute_coalition_data(all_votes: pd.DataFrame, members: pd.DataFrame,
+                            positions: pd.DataFrame) -> pd.DataFrame:
+    """
+    Per GroupKey: organic coalition type, flip status, chamber, top 2 topics.
+    Excludes unclassifiable ('Andere') GroupKeys.
+    """
+    if positions.empty or all_votes.empty:
+        return pd.DataFrame()
+
+    pos_sub = positions[[f for f in MAIN_FRACS if f in positions.columns]]
+
+    # Classify every GroupKey
+    classifications: dict[str, tuple] = {}
+    for gk in pos_sub.index:
+        cls = classify_coalition(pos_sub.loc[gk])
+        if cls[0] != "Andere":
+            classifications[gk] = cls
+    if not classifications:
+        return pd.DataFrame()
+
+    active = all_votes[~all_votes["DecisionNorm"].isin(ABSENT)].copy()
+
+    # Actual majority vote (Ja/Nein) per GroupKey
+    ja_nein = active[active["DecisionNorm"].isin(("Ja", "Nein"))]
+    actual_majority = ja_nein.groupby("GroupKey")["DecisionNorm"].agg(
+        lambda s: s.mode().iloc[0] if not s.empty else None
+    )
+    vote_margin = (
+        ja_nein.groupby(["GroupKey", "DecisionNorm"]).size()
+        .unstack(fill_value=0)
+    )
+
+    # Assign each vote row to a coalition side (lf / rf) via merge
+    frac_lookup = members.set_index("PersonNumber")["FractionAbbr"]
+    active = active.copy()
+    active["FractionAbbr"] = active["PersonNumber"].map(frac_lookup)
+
+    side_rows = [
+        {"GroupKey": gk, "FractionAbbr": f, "Side": side}
+        for gk, (_, lf, rf, _, _) in classifications.items()
+        for f, side in [(f2, "lf") for f2 in lf] + [(f2, "rf") for f2 in rf]
+    ]
+    side_df = pd.DataFrame(side_rows)
+
+    active_cls = (active[active["GroupKey"].isin(classifications)]
+                  .dropna(subset=["FractionAbbr"])
+                  .merge(side_df, on=["GroupKey", "FractionAbbr"], how="left"))
+    side_counts = (
+        active_cls.dropna(subset=["Side"])
+        .groupby(["GroupKey", "Side"]).size()
+        .unstack(fill_value=0)
+        .reindex(columns=["lf", "rf"], fill_value=0)
+    )
+
+    # Topic lookup: BizShort → [tag, ...]
+    lookup = _biz_tag_lookup()
+    biz_topic_map: dict[str, list[str]] = {}
+    if lookup and "BizNumber" in all_votes.columns:
+        biz_bn = (all_votes[all_votes["BizShort"].notna() & all_votes["BizNumber"].notna()]
+                  .drop_duplicates("BizShort")
+                  .set_index("BizShort")["BizNumber"])
+        for bs, bn in biz_bn.items():
+            biz_topic_map[bs] = lookup.get(str(bn or "").strip(), [])
+
+    meta = (all_votes[["GroupKey", "BizShort", "BizTitle", "Subject", "MeetingDate"]]
+            .drop_duplicates("GroupKey").set_index("GroupKey"))
+
+    rows = []
+    for gk, (label, lf, rf, lf_dec, rf_dec) in classifications.items():
+        if gk not in meta.index:
+            continue
+        m = meta.loc[gk]
+        biz_short = str(m.get("BizShort") or "").strip()
+
+        flipped = False
+        lf_n = rf_n = 0
+        if label != "Konsens" and gk in side_counts.index:
+            lf_n = int(side_counts.at[gk, "lf"])
+            rf_n = int(side_counts.at[gk, "rf"])
+            predicted_dec = lf_dec if lf_n >= rf_n else rf_dec
+            actual = actual_majority.get(gk)
+            if actual in ("Ja", "Nein"):
+                flipped = (predicted_dec != actual)
+
+        margin = 0
+        if gk in vote_margin.index:
+            j  = int(vote_margin.at[gk, "Ja"])   if "Ja"   in vote_margin.columns else 0
+            n  = int(vote_margin.at[gk, "Nein"])  if "Nein" in vote_margin.columns else 0
+            margin = abs(j - n)
+
+        topics = biz_topic_map.get(biz_short, [])
+        rows.append({
+            "GroupKey":      gk,
+            "Koalitionstyp": label,
+            "lf":            "+".join(sorted(lf, key=lambda f: _FRAC_SCORE_MAP.get(f, 0))),
+            "rf":            "+".join(sorted(rf, key=lambda f: _FRAC_SCORE_MAP.get(f, 0))),
+            "Flipped":       flipped,
+            "Chamber":       "SR" if gk.startswith("SR-") else "NR",
+            "lf_count":      lf_n,
+            "rf_count":      rf_n,
+            "Margin":        margin,
+            "BizShort":      biz_short,
+            "BizTitle":      str(m.get("BizTitle") or ""),
+            "Subject":       str(m.get("Subject") or ""),
+            "MeetingDate":   str(m.get("MeetingDate") or ""),
+            "Thema1":        topics[0] if topics else "",
+            "Thema2":        topics[1] if len(topics) > 1 else "",
+        })
+
+    return pd.DataFrame(rows)

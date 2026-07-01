@@ -24,6 +24,7 @@ from analysis import (
     get_topic_groupkeys, topic_deviators_all,
     search_geschaefte, geschaeft_votes_enriched,
     cross_chamber_mp, cross_chamber_fraction,
+    compute_coalition_data, COALITION_ORDER,
 )
 from topics import TOPICS
 import summarizer
@@ -505,12 +506,17 @@ def get_sunburst_data():
             colors.append("#cccccc")
     return ids, labels, parents, values, colors
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_coalition_data() -> pd.DataFrame:
+    return compute_coalition_data(get_all_votes(), get_members(), get_positions())
+
 def clear_cache():
     for fn in (get_members, get_all_votes, get_mp_votes,
                get_fraction_votes, get_sessions, get_positions,
                get_all_mp_deviations, get_topic_fraction_cohesion,
                get_mp_fraction_alignment, get_mp_pca, get_sunburst_data,
-               get_vote_polarity_scatter, get_direction_magnitude_scatter):
+               get_vote_polarity_scatter, get_direction_magnitude_scatter,
+               get_coalition_data):
         fn.clear()
 
 def _has_db() -> bool:
@@ -1112,138 +1118,140 @@ elif page == "Geschäft":
             )
             _biz_click_nav(_ev_pol, "pol_scatter")
 
-        # ── Landing: direction × magnitude scatter ────────────────────────
+        # ── Landing: coalition stacked bar ───────────────────────────────
         st.markdown("---")
-        st.subheader("Richtung & Stärke der Abweichungen")
-        with st.spinner("Berechne Richtungsanalyse…"):
-            _dm = get_direction_magnitude_scatter()
-        if not _dm.empty:
-            _COALITION_COLORS = {
-                "Parteilinien":      "#888888",
-                "Mitte kippt links": "#9B59B6",
-                "Mitte kippt rechts":"#1ABC9C",
-                "Konsens":           "#BDC3C7",
-                "Unheilige Allianz": "#E91E8C",
-            }
-            _COALITION_ORDER = [
-                "Parteilinien", "Mitte kippt links", "Mitte kippt rechts",
-                "Konsens", "Unheilige Allianz",
+        st.subheader("Koalitionen & Abweichler")
+        with st.spinner("Berechne Koalitionsanalyse…"):
+            _coal = get_coalition_data()
+
+        if not _coal.empty:
+            # Trace config: (Chamber, Flipped, color, legend label)
+            _TRACE_CFG = [
+                ("NR", False, "#1565C0", "NR — Koalition hält"),
+                ("NR", True,  "#C62828", "NR — Abweichler entscheidet"),
+                ("SR", False, "#64B5F6", "SR — Koalition hält"),
+                ("SR", True,  "#EF9A9A", "SR — Abweichler entscheidet"),
             ]
-            _COALITION_DESCS = {
-                "Parteilinien":
-                    "Standard Links-Rechts-Block: G/SP gegen FDP/SVP. Die Mitte (GLP, M-E) "
-                    "ist geteilt oder ohne klare Mehrheit. Hohe Y-Werte bedeuten, dass viele "
-                    "einzelne MPs intern gegen ihre Fraktion stimmten — nicht, dass sich Blöcke "
-                    "vermischten.",
-                "Mitte kippt links":
-                    "GLP *und* M-E stimmten geschlossen mit G/SP gegen FDP/SVP. "
-                    "Die Linke hatte eine breite parlamentarische Mehrheit.",
-                "Mitte kippt rechts":
-                    "GLP *und* M-E stimmten geschlossen mit FDP/SVP gegen G/SP. "
-                    "Das rechte Lager hatte eine breite parlamentarische Mehrheit.",
-                "Konsens":
-                    "Mindestens 5 von 6 Fraktionen auf derselben Seite — "
-                    "eine seltene, parteiübergreifende Einigkeit.",
-                "Unheilige Allianz":
-                    "Ideologisch gegensätzliche Fraktionen stimmten zusammen: "
-                    "z.B. SP+SVP oder G+FDP — die übliche Lager-Logik ausser Kraft gesetzt.",
-            }
+            _agg = (_coal.groupby(["Koalitionstyp", "Chamber", "Flipped"])
+                    .size().reset_index(name="n"))
 
-            with st.expander("Was bedeuten die Koalitionstypen?"):
-                for _ct in _COALITION_ORDER:
-                    _col_dot, _col_txt = st.columns([0.04, 0.96])
-                    _col_dot.markdown(
-                        f"<div style='width:14px;height:14px;border-radius:50%;"
-                        f"background:{_COALITION_COLORS[_ct]};margin-top:3px'></div>",
-                        unsafe_allow_html=True,
-                    )
-                    _col_txt.markdown(f"**{_ct}** — {_COALITION_DESCS[_ct]}")
-
-            # Chart + checkboxes side by side
-            _chart_col, _chk_col = st.columns([5, 1])
-
-            _dm_active = []
-            with _chk_col:
-                st.markdown("**Anzeigen**")
-                for _ct in _COALITION_ORDER:
-                    if st.checkbox(
-                        _ct, value=True, key=f"dm_chk_{_ct}",
-                    ):
-                        _dm_active.append(_ct)
-
-            if not _dm_active:
-                _dm_active = list(_COALITION_ORDER)
-
-            _dm_show = _dm[_dm["Koalitionstyp"].isin(_dm_active)].copy()
-            _dm_show["BizTitle"] = _dm_show["BizTitle"].fillna("")
-            _dm_show["Subject"]  = _dm_show["Subject"].fillna("")
-
-            def _dir_label(x):
-                if abs(x) < 0.005:
-                    return f"Netto-Richtung = {x:.2f}"
-                return (f"← Zug nach links: {abs(x):.2f}"
-                        if x < 0 else f"Zug nach rechts →: {x:.2f}")
-
-            _dm_show["_DirLabel"] = _dm_show["NetGravity"].apply(_dir_label)
-
-            with _chart_col:
-                _fig_dm = px.scatter(
-                    _dm_show,
-                    x="NetGravity",
-                    y="DeviationPct",
-                    color="Koalitionstyp",
-                    color_discrete_map=_COALITION_COLORS,
-                    category_orders={"Koalitionstyp": _COALITION_ORDER},
-                    custom_data=["BizTitle", "Subject", "BizShort",
-                                 "_DirLabel", "MeetingDate", "Koalitionstyp"],
-                    labels={
-                        "NetGravity":   "← Zug nach links · Richtung · Zug nach rechts →",
-                        "DeviationPct": "Interne Abweichungsrate (%)",
-                    },
-                    opacity=0.65,
-                    height=480,
-                )
-                _fig_dm.update_traces(
-                    marker=dict(size=5),
+            _fig_coal = go.Figure()
+            for _kammer, _flipped, _color, _name in _TRACE_CFG:
+                _sub = _agg[(_agg["Chamber"] == _kammer) & (_agg["Flipped"] == _flipped)]
+                _counts = dict(zip(_sub["Koalitionstyp"], _sub["n"]))
+                _ys = [_counts.get(ct, 0) for ct in COALITION_ORDER]
+                _fig_coal.add_trace(go.Bar(
+                    name=_name,
+                    x=COALITION_ORDER,
+                    y=_ys,
+                    offsetgroup=_kammer,
+                    marker_color=_color,
+                    customdata=[[_kammer, _flipped, ct] for ct in COALITION_ORDER],
                     hovertemplate=(
-                        "<b>%{customdata[0]}</b><br>"
-                        "<b>%{customdata[1]}</b><br>"
-                        "<b>Geschäft %{customdata[2]}</b><br>"
-                        "<br>"
-                        "%{customdata[3]}<br>"
-                        "Abweichungsrate: %{y:.1f}%<br>"
-                        "Koalition: %{customdata[5]}<br>"
-                        "%{customdata[4]}"
+                        "<b>%{x}</b><br>"
+                        "%{y} Abstimmungen<br>"
+                        f"{_name}"
                         "<extra></extra>"
                     ),
-                )
-                _fig_dm.update_layout(
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    margin=dict(l=20, r=20, t=30, b=20),
-                    xaxis=dict(
-                        showgrid=True, zeroline=True,
-                        zerolinewidth=1.5, zerolinecolor="#aaa",
-                        range=[-1.1, 1.1],
-                    ),
-                    yaxis=dict(showgrid=True, zeroline=False),
-                    legend=dict(orientation="v"),
-                    legend_title="",
-                )
-                _ev_dm = st.plotly_chart(
-                    _fig_dm, use_container_width=True,
-                    key="dm_scatter", on_select="rerun",
-                )
-
-            st.caption(
-                "Nur polarisierte Abstimmungen (Links- und Rechtslager stimmen unterschiedlich). "
-                "**X-Achse**: Netto-Richtung aller Abweichungen — gewichtet nach politischer Distanz "
-                "(SVP-Mitglied das links stimmt → starker Linkszug; GLP-Mitglied → schwacher Zug). "
-                "**Y-Achse**: Anteil aller Parlamentarier:innen, die gegen ihre *eigene* "
-                "Fraktionslinie stimmten — misst interne Disziplin, nicht Blockloyalität. "
-                "Punkt anklicken für Direktnavigation."
+                ))
+            _fig_coal.update_layout(
+                barmode="stack",
+                height=340,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                margin=dict(l=20, r=20, t=10, b=10),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                            xanchor="right", x=1, font=dict(size=11)),
+                bargap=0.25,
+                bargroupgap=0.08,
+                xaxis=dict(tickangle=-25, tickfont=dict(size=11)),
+                yaxis=dict(title="Anzahl Abstimmungen", showgrid=True, zeroline=False),
             )
-            _biz_click_nav(_ev_dm, "dm_scatter")
+            _ev_coal = st.plotly_chart(
+                _fig_coal, use_container_width=True,
+                key="coalition_bar", on_select="rerun",
+            )
+            st.caption(
+                "Balken anklicken zum Filtern der Abstimmungsliste ↓  ·  "
+                "Dunkel = NR, hell = SR  ·  Blau = Koalition hält, Rot = Abweichler entscheiden"
+            )
+
+            # Derive filter from bar click
+            _sel_ct      = None
+            _sel_kammer  = None
+            _sel_flipped = None
+            if _ev_coal and _ev_coal.selection and _ev_coal.selection.points:
+                _pt = _ev_coal.selection.points[0]
+                _cn = _pt.get("curve_number", _pt.get("curveNumber", 0))
+                if 0 <= _cn < len(_TRACE_CFG):
+                    _sel_kammer, _sel_flipped, _, _ = _TRACE_CFG[_cn]
+                _sel_ct = _pt.get("x")
+
+            # Filter data
+            _coal_show = _coal.copy()
+            if _sel_ct:
+                _coal_show = _coal_show[_coal_show["Koalitionstyp"] == _sel_ct]
+            if _sel_kammer:
+                _coal_show = _coal_show[_coal_show["Chamber"] == _sel_kammer]
+            if _sel_flipped is not None:
+                _coal_show = _coal_show[_coal_show["Flipped"] == _sel_flipped]
+
+            # Top topics for selected segment
+            if _sel_ct and not _coal_show.empty:
+                from collections import Counter as _Counter
+                _all_tags = [t for t in
+                             list(_coal_show["Thema1"]) + list(_coal_show["Thema2"]) if t]
+                _top5 = _Counter(_all_tags).most_common(5)
+                if _top5:
+                    st.markdown(
+                        "**Häufigste Themen:** " +
+                        " · ".join(f"{t} ({n})" for t, n in _top5)
+                    )
+
+            # Abstimmungen table
+            _tbl_label = ""
+            if _sel_ct:
+                _tbl_label = (f"{_sel_ct}"
+                              + (f" · {_sel_kammer}" if _sel_kammer else "")
+                              + (" · Abweichler entscheidet" if _sel_flipped else
+                                 " · Koalition hält" if _sel_flipped is False else ""))
+            st.markdown(
+                f"**Abstimmungen** {('— ' + _tbl_label) if _tbl_label else '(alle)'}  "
+                f"*({len(_coal_show)})*"
+            )
+
+            _tbl_df = (_coal_show[["BizShort", "MeetingDate", "Chamber",
+                                   "Koalitionstyp", "Flipped", "Subject",
+                                   "Thema1", "Thema2", "Margin"]]
+                       .copy()
+                       .sort_values("MeetingDate", ascending=False))
+            _tbl_df["Abweichler"] = _tbl_df["Flipped"].map({True: "✓", False: ""})
+            _tbl_df = _tbl_df.drop(columns=["Flipped"]).rename(columns={
+                "BizShort":      "Geschäft",
+                "MeetingDate":   "Datum",
+                "Chamber":       "Kammer",
+                "Koalitionstyp": "Koalition",
+                "Subject":       "Abstimmung",
+                "Thema1":        "Thema 1",
+                "Thema2":        "Thema 2",
+                "Margin":        "Differenz",
+            })
+            _ev_coal_tbl = st.dataframe(
+                _tbl_df,
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key="coal_tbl",
+            )
+            if (_ev_coal_tbl and _ev_coal_tbl.selection
+                    and _ev_coal_tbl.selection.rows):
+                _row_idx = _ev_coal_tbl.selection.rows[0]
+                _goto_bs = _coal_show.sort_values(
+                    "MeetingDate", ascending=False
+                ).iloc[_row_idx]["BizShort"]
+                if _goto_bs:
+                    navigate_to_geschaeft(_goto_bs)
         st.stop()
 
     with st.spinner("Suche…"):
