@@ -1689,41 +1689,78 @@ elif page == "Mitglied":
             _all_topics = load_available_tags()
             _other_fracs = [f for f in FRAC_ORDER if f != frac and f in positions.columns]
 
-            # Reuse topic_dev (already computed above) — same metric as "Abweichungsrate nach Thema"
+            # Reuse topic_dev (already computed above)
             _topic_share = {row["Thema"]: row["Abweichung (%)"] for _, row in topic_dev.iterrows()}
             for _t in _all_topics:
                 _topic_share.setdefault(_t, 0.0)
             _sorted_topics = sorted(_all_topics, key=lambda t: _topic_share[t], reverse=True)
 
-            with st.form("dev_filters"):
-                _fc1, _fc2 = st.columns([3, 1])
-                with _fc1:
-                    _topic_sel = st.multiselect(
-                        "Themen",
-                        options=_sorted_topics,
-                        default=_sorted_topics,
-                        key="dev_topics_ms",
-                        format_func=lambda t: f"{TOPIC_EMOJI.get(t,'')} {t} ({_topic_share[t]:.1f}%)",
-                    )
-                with _fc2:
-                    _frac_sel = st.multiselect(
-                        "Mit Fraktion",
-                        options=_other_fracs,
-                        default=_other_fracs,
-                        key="dev_fracs_ms",
-                        format_func=frac_label,
-                    )
-                st.form_submit_button("Anwenden")
+            # Per-topic: which fractions does this MP most often deviate WITH?
+            _tagged_dev = tag_topics(deviated)
+            _topic_partners: dict[str, list] = {}
+            for _t in _sorted_topics:
+                _in_t = _tagged_dev[_tagged_dev["Topics"].map(lambda ts: _t in ts)]
+                if len(_in_t) < 2:
+                    continue
+                _counts: dict[str, float] = {}
+                for _f in _other_fracs:
+                    if _f in positions.columns:
+                        _fpos = _in_t["GroupKey"].map(positions[_f])
+                        _agrees = (_in_t["DecisionNorm"] == _fpos).sum()
+                        _total  = int(_fpos.notna().sum())
+                        if _total >= 2:
+                            _counts[_f] = _agrees / _total * 100
+                _topic_partners[_t] = sorted(_counts.items(), key=lambda x: x[1], reverse=True)
 
+            # Build filter table
+            _tbl_rows = []
+            for _t in _sorted_topics:
+                _rate = _topic_share.get(_t, 0.0)
+                _pts  = _topic_partners.get(_t, [])
+                _tbl_rows.append({
+                    "Thema": f"{TOPIC_EMOJI.get(_t, '')} {_t}",
+                    "Abweichung (%)": _rate,
+                    "Partner 1": f"{frac_label(_pts[0][0])} {_pts[0][1]:.0f}%" if _pts else "—",
+                    "Partner 2": f"{frac_label(_pts[1][0])} {_pts[1][1]:.0f}%" if len(_pts) > 1 else "",
+                    "_topic": _t,
+                })
+            _tbl_df = pd.DataFrame(_tbl_rows)
+
+            st.caption("Zeilen auswählen zum Filtern der Abstimmungen ↓ (nichts ausgewählt = alle)")
+            _tbl_ev = st.dataframe(
+                _tbl_df.drop(columns=["_topic"]),
+                column_config={
+                    "Abweichung (%)": st.column_config.ProgressColumn(
+                        "Abweichung (%)", min_value=0, max_value=100, format="%.1f%%",
+                    ),
+                },
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="multi-row",
+                key="dev_topic_filter",
+            )
+
+            _selected_rows = _tbl_ev.selection.rows
             _dev_show = deviated.copy()
-            if _topic_sel and len(_topic_sel) < len(_sorted_topics):
-                _tagged   = tag_topics(_dev_show)
-                _dev_show = _tagged[_tagged["Topics"].map(
-                    lambda ts: bool(set(ts) & set(_topic_sel))
+            if _selected_rows:
+                _sel_topics = {_tbl_df.iloc[i]["_topic"] for i in _selected_rows}
+                _tagged2    = tag_topics(_dev_show)
+                _dev_show   = _tagged2[_tagged2["Topics"].map(
+                    lambda ts: bool(set(ts) & _sel_topics)
                 )]
-            if 0 < len(_frac_sel) < len(_other_fracs):
+
+            _frac_filter = st.multiselect(
+                "Abweichung zusammen mit:",
+                options=_other_fracs,
+                default=[],
+                format_func=frac_label,
+                key="dev_frac_filter",
+                placeholder="alle Fraktionen",
+            )
+            if _frac_filter:
                 _frac_mask = pd.Series(False, index=_dev_show.index)
-                for _sf in _frac_sel:
+                for _sf in _frac_filter:
                     if _sf in positions.columns:
                         _maj = _dev_show["GroupKey"].map(positions[_sf])
                         _frac_mask = _frac_mask | (_dev_show["DecisionNorm"] == _maj)
