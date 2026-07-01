@@ -1078,7 +1078,7 @@ elif page == "Geschäft":
 
     if not keyword.strip():
         # ── Landing: coalition stacked bar ───────────────────────────────
-        st.subheader("Koalitionen & Abweichler")
+        st.subheader("Gewonnene Abstimmungen: Koalitionen & Abweichler")
         with st.spinner("Berechne Koalitionsanalyse…"):
             _coal = get_coalition_data()
 
@@ -1088,9 +1088,9 @@ elif page == "Geschäft":
             # Trace config: (Chamber, Flipped, color, legend label)
             _TRACE_CFG = [
                 ("NR", False, "#1565C0", "NR — Koalition hält"),
-                ("NR", True,  "#C62828", "NR — Abweichler entscheidet"),
                 ("SR", False, "#64B5F6", "SR — Koalition hält"),
-                ("SR", True,  "#EF9A9A", "SR — Abweichler entscheidet"),
+                ("NR", True,  "#C62828", "NR — Abweichler entscheiden"),
+                ("SR", True,  "#EF9A9A", "SR — Abweichler entscheiden"),
             ]
             _agg = (_coal.groupby(["Koalitionstyp", "Chamber", "Flipped"])
                     .size().reset_index(name="n"))
@@ -1106,33 +1106,122 @@ elif page == "Geschäft":
                 reverse=True,
             )
 
+            _BUBBLE_THRESHOLD = 25
+
+            _ss_sel: dict    = st.session_state.get("_coal_selection", {})
+            _ss_filter: dict = st.session_state.get("_coal_filter", {})
+            _was_explicit: bool = st.session_state.pop("_coal_explicit", False)
+
+            # Display labels for coalition types (raw DB names → readable)
+            _COAL_DISPLAY: dict[str, str] = {
+                "GL+M-E+RL+V vs G+S":   "Alle gegen Grüne+SP",
+                "M-E+RL+V vs G+S+GL":   "Mitte-Rechts gegen GLP+Links",
+                "G+S+GL+M-E vs RL+V":   "Alle gegen FDP+SVP",
+                "G+S+GL+RL vs M-E+V":   "Alle gegen CVP+SVP",
+                "G+S+M-E vs GL+RL+V":   "Mitte+Links gegen GLP+FDP+SVP",
+            }
+
+            # Pre-compute per-coalition counts for bubble positioning
+            _all_counts: dict[tuple, dict] = {}  # (kammer, flipped) → {ct: n}
+            for _kammer, _flipped, _color, _name in _TRACE_CFG:
+                _sub = _agg[(_agg["Chamber"] == _kammer) & (_agg["Flipped"] == _flipped)]
+                _all_counts[(_kammer, _flipped)] = dict(zip(_sub["Koalitionstyp"], _sub["n"]))
+
+            # Global max stack height for y-offset calculation
+            _max_stack_h = max(
+                (_all_counts[(_k, False)].get(ct, 0) + _all_counts[(_k, True)].get(ct, 0))
+                for _k in ("NR", "SR") for ct in _coal_order
+            ) if _coal_order else 1
+            _y_off = max(_max_stack_h * 0.035, 2)
+
+            # Use numeric x for all traces so scatter offsets work precisely.
+            # bargap=0.25, bargroupgap=0.08, 2 groups → each bar ≈ 0.347 wide → group offset ≈ ±0.19
+            _x_nums  = list(range(len(_coal_order)))
+            _cat_idx = {ct: i for i, ct in enumerate(_coal_order)}
+            _NR_X_OFF = -0.19
+            _SR_X_OFF = +0.19
+
+            def _bar_color(hex_col: str, ct: str, kammer: str, flipped: bool) -> str:
+                """Return full hex or dim rgba depending on current selection."""
+                if not _ss_sel:
+                    return hex_col
+                sel_ct      = _ss_sel.get("ct")
+                sel_kammer  = _ss_sel.get("kammer")
+                sel_flipped = _ss_sel.get("flipped")
+                ct_ok      = (not sel_ct     or ct     == sel_ct)
+                kammer_ok  = (not sel_kammer or kammer == sel_kammer)
+                flipped_ok = (sel_flipped is None or flipped == sel_flipped)
+                if ct_ok and kammer_ok and flipped_ok:
+                    return hex_col
+                r, g, b = int(hex_col[1:3], 16), int(hex_col[3:5], 16), int(hex_col[5:7], 16)
+                return f"rgba({r},{g},{b},0.15)"
+
             _fig_coal = go.Figure()
             for _kammer, _flipped, _color, _name in _TRACE_CFG:
-                _sub    = _agg[(_agg["Chamber"] == _kammer) & (_agg["Flipped"] == _flipped)]
-                _counts = dict(zip(_sub["Koalitionstyp"], _sub["n"]))
-                _ys     = [_counts.get(ct, 0) for ct in _coal_order]
-                # Show count label outside bar for small flipped segments
-                _texts  = (
-                    [str(y) if (y > 0 and y < 30) else "" for y in _ys]
-                    if _flipped else [""] * len(_ys)
-                )
+                _ys = [_all_counts[(_kammer, _flipped)].get(ct, 0) for ct in _coal_order]
+                _txt_inside = [str(y) if y >= _BUBBLE_THRESHOLD else "" for y in _ys]
+                _txt_color = "white" if _kammer == "NR" else ("#7f0000" if _flipped else "#1a237e")
+                _bar_colors = [_bar_color(_color, ct, _kammer, _flipped) for ct in _coal_order]
                 _fig_coal.add_trace(go.Bar(
                     name=_name,
-                    x=_coal_order,
+                    x=_x_nums,
                     y=_ys,
                     offsetgroup=_kammer,
-                    marker_color=_color,
-                    text=_texts,
-                    textposition="outside",
-                    textfont=dict(size=10, color=_color),
+                    marker_color=_bar_colors,
+                    text=_txt_inside,
+                    textposition="inside",
+                    textfont=dict(size=10, color=_txt_color),
                     customdata=[[_kammer, _flipped, ct] for ct in _coal_order],
+                    selected=dict(marker=dict(opacity=1.0)),
+                    unselected=dict(marker=dict(opacity=1.0)),
                     hovertemplate=(
-                        "<b>%{x}</b><br>"
+                        "<b>%{customdata[2]}</b><br>"
                         "%{y} Abstimmungen<br>"
                         f"{_name}"
                         "<extra></extra>"
                     ),
                 ))
+
+            # Bubble markers for small flipped segments — offset ±0.19 aligns with bar group center
+            for _bub_kammer, _bub_color, _bub_txt_color, _bub_x_off in [
+                ("NR", "#B71C1C", "white",   _NR_X_OFF),
+                ("SR", "#EF9A9A", "#7f0000", _SR_X_OFF),
+            ]:
+                _bub_x, _bub_y, _bub_cd, _bub_t, _bub_cts = [], [], [], [], []
+                for ct in _coal_order:
+                    n = _all_counts[(_bub_kammer, True)].get(ct, 0)
+                    if 0 < n < _BUBBLE_THRESHOLD:
+                        _bar_top = (
+                            _all_counts[(_bub_kammer, False)].get(ct, 0)
+                            + _all_counts[(_bub_kammer, True)].get(ct, 0)
+                        )
+                        _bub_x.append(_cat_idx[ct] + _bub_x_off)
+                        _bub_y.append(_bar_top + _y_off)
+                        _bub_cd.append([_bub_kammer, True, ct])
+                        _bub_t.append(str(n))
+                        _bub_cts.append(ct)
+                if _bub_x:
+                    _bub_colors = [_bar_color(_bub_color, ct, _bub_kammer, True) for ct in _bub_cts]
+                    _fig_coal.add_trace(go.Scatter(
+                        x=_bub_x, y=_bub_y,
+                        mode="markers+text",
+                        marker=dict(size=26, color=_bub_colors,
+                                    line=dict(color="white", width=1.5)),
+                        text=_bub_t,
+                        textfont=dict(color=_bub_txt_color, size=10, family="sans-serif"),
+                        textposition="middle center",
+                        customdata=_bub_cd,
+                        name=f"{_bub_kammer} — Abweichler entscheiden (klein)",
+                        showlegend=False,
+                        selected=dict(marker=dict(opacity=1.0, size=26)),
+                        unselected=dict(marker=dict(opacity=1.0)),
+                        hovertemplate=(
+                            "<b>%{customdata[2]}</b><br>"
+                            "%{text} Abstimmungen<br>"
+                            f"{_bub_kammer} — Abweichler entscheiden"
+                            "<extra></extra>"
+                        ),
+                    ))
             _fig_coal.update_layout(
                 barmode="stack",
                 height=520,
@@ -1140,31 +1229,64 @@ elif page == "Geschäft":
                 plot_bgcolor="rgba(0,0,0,0)",
                 margin=dict(l=20, r=20, t=40, b=10),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                            xanchor="right", x=1, font=dict(size=11)),
+                            xanchor="left", x=0, traceorder="normal", font=dict(size=11)),
                 bargap=0.25,
                 bargroupgap=0.08,
-                xaxis=dict(tickangle=-25, tickfont=dict(size=11)),
+                xaxis=dict(
+                    tickvals=_x_nums,
+                    ticktext=[_COAL_DISPLAY.get(ct, ct) for ct in _coal_order],
+                    tickangle=-25,
+                    tickfont=dict(size=11),
+                ),
                 yaxis=dict(title="Anzahl Abstimmungen", showgrid=True, zeroline=False),
             )
+            _coal_chart_key = st.session_state.get("_coal_chart_reset", 0)
+            if _ss_sel or _ss_filter:
+                if st.button("Filter zurücksetzen", key="coal_reset_btn"):
+                    st.session_state["_coal_chart_reset"] = _coal_chart_key + 1
+                    st.session_state.pop("_coal_selection", None)
+                    st.session_state.pop("_coal_filter", None)
+                    st.session_state.pop("_coal_explicit", None)
+                    st.rerun()
             _ev_coal = st.plotly_chart(
                 _fig_coal, use_container_width=True,
-                key="coalition_bar", on_select="rerun",
+                key=f"coalition_bar_{_coal_chart_key}", on_select="rerun",
             )
             st.caption(
                 "Balken anklicken zum Filtern der Abstimmungsliste ↓  ·  "
                 "Dunkel = NR, hell = SR  ·  Blau = Koalition hält, Rot = Abweichler entscheiden"
             )
 
-            # Derive filter from bar click
             _sel_ct      = None
             _sel_kammer  = None
             _sel_flipped = None
-            if _ev_coal and _ev_coal.selection and _ev_coal.selection.points:
-                _pt = _ev_coal.selection.points[0]
-                _cn = _pt.get("curve_number", _pt.get("curveNumber", 0))
+
+            if _was_explicit:
+                # Explicit rerun we triggered: Plotly event is gone, read from stored filter.
+                _sel_ct      = _ss_filter.get("ct")
+                _sel_kammer  = _ss_filter.get("kammer")
+                _sel_flipped = _ss_filter.get("flipped")
+
+            elif _ev_coal and _ev_coal.selection and _ev_coal.selection.points:
+                _pt    = _ev_coal.selection.points[0]
+                _cn    = _pt.get("curve_number", _pt.get("curveNumber", 0))
+                _pt_cd = _pt.get("customdata") or []
                 if 0 <= _cn < len(_TRACE_CFG):
                     _sel_kammer, _sel_flipped, _, _ = _TRACE_CFG[_cn]
-                _sel_ct = _pt.get("x")
+                elif len(_pt_cd) >= 2:
+                    _sel_kammer  = _pt_cd[0]
+                    _sel_flipped = _pt_cd[1]
+                _sel_ct = _pt_cd[2] if len(_pt_cd) >= 3 else None
+
+                _new_sel = (
+                    {"ct": _sel_ct, "kammer": _sel_kammer, "flipped": _sel_flipped}
+                    if (_sel_ct or _sel_kammer or _sel_flipped is not None) else {}
+                )
+                if _new_sel != _ss_sel:
+                    st.session_state["_coal_selection"] = _new_sel
+                    st.session_state["_coal_filter"]    = _new_sel
+                    st.session_state["_coal_explicit"]  = True
+                    st.rerun()
 
             # Filter data
             _coal_show = _coal.copy().sort_values("MeetingDate", ascending=False)
@@ -1178,7 +1300,7 @@ elif page == "Geschäft":
             # Info row above table
             _info_parts = []
             if _sel_ct:
-                _info_parts.append(f"**{_sel_ct}**")
+                _info_parts.append(f"**{_COAL_DISPLAY.get(_sel_ct, _sel_ct)}**")
             if _sel_kammer:
                 _info_parts.append(_sel_kammer)
             if _sel_flipped is True:
@@ -1188,54 +1310,61 @@ elif page == "Geschäft":
             elif _sel_flipped is False:
                 _info_parts.append("Koalition hält")
 
-            # Top topics
-            _all_tags = [t for t in
-                         list(_coal_show["Thema1"]) + list(_coal_show["Thema2"]) if t]
-            _top5 = _Counter(_all_tags).most_common(5)
-            _topic_str = (" · ".join(f"{t} ({n})" for t, n in _top5)) if _top5 else ""
-
             _header = " · ".join(_info_parts) if _info_parts else "Alle Abstimmungen"
-            st.markdown(
-                f"**{_header}**  *({len(_coal_show)})*"
-                + (f"  —  {_topic_str}" if _topic_str and _sel_ct else "")
-            )
+            st.markdown(f"**{_header}**  *({len(_coal_show)})*")
 
-            # Table (no tick-box — no on_select)
-            _tbl_df = (_coal_show[["BizShort", "MeetingDate", "Chamber",
-                                   "Koalitionstyp", "Flipped", "Subject", "Margin",
-                                   "GroupKey"]]
+            if _sel_ct:
+                _all_tags = [t for t in
+                             list(_coal_show["Thema1"]) + list(_coal_show["Thema2"]) if t]
+                _top5 = _Counter(_all_tags).most_common(5)
+                if _top5:
+                    _topic_str = " · ".join(
+                        f"{TOPIC_EMOJI.get(t, '')} {t} ({n})" for t, n in _top5
+                    )
+                    st.markdown(_topic_str)
+
+            # Table: Geschäft as LinkColumn (BizShort, navigates to Abstimmung),
+            # compact ↗ for direct jump, Subject as plain "Abstimmung" text
+            _tbl_df = (_coal_show[["Chamber", "MeetingDate", "BizShort", "BizTitle",
+                                   "Subject", "Margin", "GroupKey"]]
                        .copy())
-            _tbl_df["Abweichler"] = _tbl_df["Flipped"].map({True: "✓", False: ""})
-            _tbl_display = _tbl_df.drop(columns=["Flipped", "GroupKey"]).rename(columns={
-                "BizShort":      "Geschäft",
-                "MeetingDate":   "Datum",
-                "Chamber":       "Kammer",
-                "Koalitionstyp": "Koalition",
-                "Subject":       "Abstimmung",
-                "Margin":        "Differenz",
-            })
+            _tbl_df["_nav_url"] = _tbl_df.apply(
+                lambda r: "?" + urlencode({
+                    "page": "Geschäft",
+                    "q":    str(r["BizShort"]),
+                    "gk":   str(r["GroupKey"]),
+                }),
+                axis=1,
+            )
+            _tbl_df["Geschäft_lnk"] = _tbl_df["_nav_url"]
+            _tbl_df["↗"] = _tbl_df["_nav_url"]
+            _tbl_df["Differenz_str"] = _tbl_df["Margin"].astype(int).astype(str)
+            _tbl_display = (_tbl_df[["Chamber", "MeetingDate", "Geschäft_lnk",
+                                     "BizTitle", "Subject", "Differenz_str", "↗"]]
+                            .rename(columns={
+                                "Chamber":      "Kammer",
+                                "MeetingDate":  "Datum",
+                                "Geschäft_lnk": "Geschäft",
+                                "BizTitle":     "Titel",
+                                "Subject":      "Abstimmung",
+                                "Differenz_str":"Differenz",
+                            }))
             st.dataframe(
                 _tbl_display,
+                column_config={
+                    "Kammer":     st.column_config.TextColumn("Kammer",     width="small"),
+                    "Datum":      st.column_config.TextColumn("Datum",      width="small"),
+                    "Geschäft":   st.column_config.LinkColumn("Geschäft",   width="small",
+                                      display_text=r"[?&]q=([^&]+)"),
+                    "Titel":      st.column_config.TextColumn("Titel",      width="large"),
+                    "Abstimmung": st.column_config.TextColumn("Abstimmung", width="medium"),
+                    "Differenz":  st.column_config.TextColumn("Differenz",  width="small"),
+                    "↗":          st.column_config.LinkColumn("↗",          width="small",
+                                      display_text="↗"),
+                },
                 use_container_width=True,
                 hide_index=True,
             )
-
-            # Navigation: selectbox + button below table
-            if not _coal_show.empty:
-                _nav_opts = [
-                    f"{row['BizShort']}  {str(row['Subject'] or '')[:70]}"
-                    for _, row in _coal_show.iterrows()
-                ]
-                _nav_sel = st.selectbox(
-                    "Abstimmung auswählen:",
-                    options=range(len(_nav_opts)),
-                    format_func=lambda i: _nav_opts[i],
-                    key="coal_nav_sel",
-                    label_visibility="collapsed",
-                )
-                if st.button("→ Zur Abstimmung", key="coal_nav_btn"):
-                    _nav_row = _coal_show.iloc[_nav_sel]
-                    navigate_to_abstimmung(_nav_row["BizShort"], _nav_row["GroupKey"])
         st.stop()
 
     with st.spinner("Suche…"):
@@ -1766,39 +1895,40 @@ elif page == "Mitglied":
                         _frac_mask = _frac_mask | (_dev_show["DecisionNorm"] == _maj)
                 _dev_show = _dev_show[_frac_mask]
 
-            # Inline table with row-click → Geschäft navigation
+            # Deviation table: Geschäft as LinkColumn navigating to specific Abstimmung
             _dv_disp = _dev_show.copy()
-            _dv_disp["🔗"] = _dv_disp.apply(
-                lambda r: _make_curia_url(r.get("BizShort",""), r.get("BizNumber","")), axis=1
+            _dv_nav = _dv_disp.apply(
+                lambda r: "?" + urlencode({
+                    "page": "Geschäft",
+                    "q":    str(r.get("BizShort", "")),
+                    "gk":   str(r.get("GroupKey", "")),
+                }),
+                axis=1,
             )
-            _dv_cols = [c for c in ["MeetingDate","BizShort","Subject","BizTitle",
-                                     "DecisionNorm","Fraktionsmehrheit","🔗"]
-                        if c in _dv_disp.columns]
+            _dv_disp["_nav"] = _dv_nav
+            _dv_disp["↗"] = _dv_nav
+            _dv_cols_base = [c for c in ["MeetingDate","_nav","BizTitle","Subject",
+                                          "DecisionNorm","Fraktionsmehrheit","↗"]
+                             if c in _dv_disp.columns]
             _dv_disp = (
-                _dv_disp[_dv_cols]
-                .rename(columns={"MeetingDate":"Datum","BizShort":"Geschäft",
-                                  "Subject":"Frage","BizTitle":"Titel",
+                _dv_disp[_dv_cols_base]
+                .rename(columns={"MeetingDate":"Datum","_nav":"Geschäft",
+                                  "BizTitle":"Titel","Subject":"Abstimmung",
                                   "DecisionNorm":"Entscheid"})
                 .sort_values("Datum", ascending=False)
                 .reset_index(drop=True)
             )
-            _dv_ev = st.dataframe(
+            st.dataframe(
                 _dv_disp,
-                column_config={"🔗": st.column_config.LinkColumn("Curia Vista", display_text="↗")},
+                column_config={
+                    "Geschäft": st.column_config.LinkColumn(
+                        "Geschäft", display_text=r"[?&]q=([^&]+)",
+                    ),
+                    "↗": st.column_config.LinkColumn("↗", display_text="↗"),
+                },
                 use_container_width=True, height=400,
-                on_select="rerun", selection_mode="single-row",
-                key="dev_table_sel",
+                hide_index=True,
             )
-            if _dv_ev.selection.rows:
-                _sel_biz = str(_dv_disp.iloc[_dv_ev.selection.rows[0]]["Geschäft"])
-                _href_biz = "?" + urlencode({"page": "Geschäft", "q": _sel_biz})
-                st.markdown(
-                    f'<a href="{_href_biz}" target="_self" style="display:inline-block;'
-                    f'padding:0.35rem 0.7rem;background:#f63366;color:white;'
-                    f'border-radius:0.3rem;text-decoration:none;font-size:0.875rem;'
-                    f'font-weight:500;">→ Geschäft {_sel_biz}</a>',
-                    unsafe_allow_html=True,
-                )
         else:
             st.info("Keine Abweichungen gefunden.")
 
@@ -2092,11 +2222,28 @@ elif page == "Fraktion":
             st.success("NR und SR stimmten auf allen gemeinsamen Geschäften gleich!")
         else:
             st.caption(f"{len(disagree)} Geschäfte mit abweichender Position:")
-            disag_disp = disagree[["BizShort", "BizTitle", "NR", "SR", "Datum"]].rename(
-                columns={"BizShort": "Geschäft", "BizTitle": "Titel"}
+            _biz_subj = all_votes.groupby("BizShort")["Subject"].first()
+            disag_disp = disagree[["BizShort", "BizTitle", "NR", "SR", "Datum"]].copy()
+            disag_disp["Abstimmung"] = disag_disp["BizShort"].map(_biz_subj).fillna("")
+            disag_disp["_nav_url"] = disag_disp["BizShort"].apply(
+                lambda b: "?" + urlencode({"page": "Geschäft", "q": str(b)})
             )
-            disag_disp["Curia Vista"] = disag_disp["Geschäft"].apply(_make_curia_url)
-            cfg = {"Curia Vista": st.column_config.LinkColumn("Curia Vista", display_text="↗")}
+            disag_disp["Geschäft_lnk"] = disag_disp["_nav_url"]
+            disag_disp["↗"] = disag_disp["_nav_url"]
+            disag_disp = (disag_disp[["Datum", "Geschäft_lnk", "BizTitle",
+                                      "Abstimmung", "NR", "SR", "↗"]]
+                          .rename(columns={"Geschäft_lnk": "Geschäft", "BizTitle": "Titel"}))
+            cfg = {
+                "Datum":      st.column_config.TextColumn("Datum",       width="small"),
+                "Geschäft":   st.column_config.LinkColumn("Geschäft",    width="small",
+                                  display_text=r"[?&]q=([^&]+)"),
+                "Titel":      st.column_config.TextColumn("Titel",       width="large"),
+                "Abstimmung": st.column_config.TextColumn("Abstimmung",  width="medium"),
+                "NR":         st.column_config.TextColumn("NR",          width="small"),
+                "SR":         st.column_config.TextColumn("SR",          width="small"),
+                "↗":          st.column_config.LinkColumn("↗",           width="small",
+                                  display_text="↗"),
+            }
             st.dataframe(disag_disp, column_config=cfg,
-                         use_container_width=True, height=300)
+                         use_container_width=True, height=300, hide_index=True)
 
