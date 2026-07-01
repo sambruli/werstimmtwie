@@ -1061,65 +1061,7 @@ elif page == "Geschäft":
     )
 
     if not keyword.strip():
-        # ── Landing: polarity scatter ─────────────────────────────────────
-        st.subheader("Lagerwechsel")
-        with st.spinner("Berechne Lagerwechsel…"):
-            _pol = get_vote_polarity_scatter()
-        if not _pol.empty:
-            _pol_show = _pol.copy()
-            _pol_show["BizTitle"] = _pol_show["BizTitle"].fillna("")
-            _pol_show["Subject"]  = _pol_show["Subject"].fillna("")
-            _fig_pol = px.scatter(
-                _pol_show,
-                x="PctDevLeft",
-                y="PctDevRight",
-                custom_data=["BizTitle", "Subject", "BizShort", "MeetingDate"],
-                labels={
-                    "PctDevLeft":  "Linksdrift (% der Mitte/FDP/SVP-Mitglieder, die mit G/SP stimmten)",
-                    "PctDevRight": "Rechtsdrift (% der G/SP/Mitte-Mitglieder, die mit FDP/SVP stimmten)",
-                },
-                opacity=0.55,
-                color_discrete_sequence=["#5c7caa"],
-                height=460,
-            )
-            _fig_pol.update_traces(
-                marker=dict(size=5),
-                hovertemplate=(
-                    "<b>%{customdata[0]}</b><br>"
-                    "<b>%{customdata[1]}</b><br>"
-                    "<b>Geschäft %{customdata[2]}</b><br>"
-                    "<br>"
-                    "Linksdrift: %{x:.1f}%<br>"
-                    "Rechtsdrift: %{y:.1f}%<br>"
-                    "%{customdata[3]}"
-                    "<extra></extra>"
-                ),
-            )
-            _fig_pol.update_layout(
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                margin=dict(l=20, r=20, t=30, b=20),
-                xaxis=dict(showgrid=True, zeroline=True, zerolinewidth=1, zerolinecolor="#ccc"),
-                yaxis=dict(showgrid=True, zeroline=True, zerolinewidth=1, zerolinecolor="#ccc"),
-            )
-            _ev_pol = st.plotly_chart(
-                _fig_pol, use_container_width=True,
-                key="pol_scatter", on_select="rerun",
-            )
-            st.caption(
-                "Jeder Punkt ist eine polarisierte Abstimmung. "
-                "**X-Achse**: Anteil der Mitte (GLP, M-E), FDP- und SVP-Mitglieder, "
-                "die mit der linken Mehrheit (G/SP) stimmten — je weiter rechts, desto "
-                "stärker der Linkszug im nicht-linken Lager. "
-                "**Y-Achse**: Anteil der Grünen-, SP- und Mitte-Mitglieder, "
-                "die mit der rechten Mehrheit (FDP/SVP) stimmten. "
-                "Oben rechts: starke Gegenbewegungen in beiden Lagern. "
-                "Punkt anklicken für Direktnavigation."
-            )
-            _biz_click_nav(_ev_pol, "pol_scatter")
-
         # ── Landing: coalition stacked bar ───────────────────────────────
-        st.markdown("---")
         st.subheader("Koalitionen & Abweichler")
         with st.spinner("Berechne Koalitionsanalyse…"):
             _coal = get_coalition_data()
@@ -1156,7 +1098,7 @@ elif page == "Geschäft":
                 ))
             _fig_coal.update_layout(
                 barmode="stack",
-                height=340,
+                height=520,
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
                 margin=dict(l=20, r=20, t=10, b=10),
