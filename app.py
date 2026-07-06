@@ -2170,9 +2170,14 @@ elif page == "Fraktion":
     # ── Richtungs-Heatmap ─────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("In welche Richtung weichen sie ab?")
+    _hm_topic = st.selectbox(
+        "Thema", ["Alle"] + load_available_tags(), key="frac_hm_topic"
+    )
     with st.spinner("Berechne Richtungen…"):
         positions   = get_positions()
-        heatmap_df  = fraction_direction_heatmap(frac, all_votes, members, positions)
+        _hm_votes   = (filter_by_topic(tag_topics(all_votes), _hm_topic)
+                       if _hm_topic != "Alle" else all_votes)
+        heatmap_df  = fraction_direction_heatmap(frac, _hm_votes, members, positions)
 
     if heatmap_df.empty:
         st.info("Zu wenig Daten für Heatmap (min. 5 Abweichungen pro Mitglied).")
