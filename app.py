@@ -148,6 +148,56 @@ div[data-testid="stSidebar"] div[data-testid="stButton"] {
 .js-plotly-plot .plotly .cursor-ns-resize {
     cursor: default !important;
 }
+
+/* ── Responsive: stack columns on narrow screens ── */
+@media (max-width: 700px) {
+    /* Stack all st.columns layouts vertically */
+    div[data-testid="stHorizontalBlock"] {
+        flex-direction: column !important;
+    }
+    div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+        width: 100% !important;
+        flex: 1 1 100% !important;
+        min-width: 0 !important;
+    }
+
+    /* Tables: allow horizontal scroll without overflowing page */
+    div[data-testid="stDataFrame"],
+    div[data-testid="stDataFrameResizable"] {
+        overflow-x: auto !important;
+        max-width: 100vw !important;
+    }
+
+    /* Metrics: tighter padding */
+    div[data-testid="stMetric"] {
+        padding: 0.5rem 0 !important;
+    }
+
+    /* Plotly: prevent chart overflow */
+    .js-plotly-plot {
+        max-width: 100% !important;
+        overflow-x: hidden !important;
+    }
+
+    /* Sidebar toggle button: make it easier to tap */
+    button[data-testid="collapsedControl"] {
+        width: 2.5rem !important;
+        height: 2.5rem !important;
+    }
+
+    /* Search/select inputs: full width */
+    div[data-testid="stTextInput"] input,
+    div[data-testid="stSelectbox"] select {
+        font-size: 1rem !important;
+    }
+}
+
+/* ── Tablet: mild layout tightening ── */
+@media (max-width: 1024px) and (min-width: 701px) {
+    div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+        min-width: 0 !important;
+    }
+}
 </style>
 """, unsafe_allow_html=True)
 
