@@ -149,6 +149,11 @@ div[data-testid="stSidebar"] div[data-testid="stButton"] {
     cursor: default !important;
 }
 
+/* ── Plotly: block native pinch-zoom on touch, allow vertical scroll ── */
+.js-plotly-plot {
+    touch-action: pan-y !important;
+}
+
 /* ── Responsive: stack columns on narrow screens ── */
 @media (max-width: 700px) {
     /* Stack all st.columns layouts vertically */
@@ -200,6 +205,9 @@ div[data-testid="stSidebar"] div[data-testid="stButton"] {
 }
 </style>
 """, unsafe_allow_html=True)
+
+# Shared Plotly config: disable scroll-zoom, drag-zoom, and double-click reset
+_PCFG = {"scrollZoom": False, "doubleClick": False, "displayModeBar": False}
 
 # ── Cached loaders ────────────────────────────────────────────────────────────
 
@@ -864,10 +872,11 @@ if page == "Home":
                        title="Abweichung vom Fraktionskurs (%)"),
             height=480,
             margin=dict(l=50, r=20, t=20, b=60),
+            dragmode=False,
         )
         _ev_pca = st.plotly_chart(
             _fig_pca, use_container_width=True,
-            key="home_pca", on_select="rerun",
+            key="home_pca", on_select="rerun", config=_PCFG,
         )
         st.caption(
             "Jeder Punkt ist ein Parlamentsmitglied. "
@@ -1018,8 +1027,9 @@ elif page == "Thema":
                 coloraxis_colorbar=dict(title="Kohäsion (%)"),
                 margin=dict(l=10, r=10, t=10, b=10),
                 height=max(420, len(_pivot) * 32),
+                dragmode=False,
             )
-            st.plotly_chart(_fig_hm, use_container_width=True)
+            st.plotly_chart(_fig_hm, use_container_width=True, config=_PCFG)
             st.caption(
                 "Fraktionskohäsion pro Thema: Grün = Fraktion stimmt geschlossen ab, "
                 "Rot = viele Abweichler. Klicke auf ein Feld zum Zoomen."
@@ -1059,7 +1069,7 @@ elif page == "Thema":
             color_discrete_map={"Thema": "#2c3e50", "Gesamt": "#bdc3c7"},
             category_orders={"Fraktion": frac_order_labels()},
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=_PCFG)
 
     # ── Top Abweichler ────────────────────────────────────────────────────
     st.markdown("---")
@@ -1089,10 +1099,10 @@ elif page == "Thema":
             height=max(350, len(show_plot) * 22),
         )
         fig2.update_layout(yaxis={"categoryorder": "total ascending"},
-                           showlegend=False)
+                           showlegend=False, dragmode=False)
         _ev_thema = st.plotly_chart(
             fig2, use_container_width=True,
-            key="thema_bar", on_select="rerun",
+            key="thema_bar", on_select="rerun", config=_PCFG,
         )
         if not _mp_click_nav(_ev_thema, "thema_bar", members):
             st.markdown("**Mitglied im Detail ansehen:**")
@@ -1289,6 +1299,7 @@ elif page == "Geschäft":
                     tickfont=dict(size=11),
                 ),
                 yaxis=dict(title="Anzahl Abstimmungen", showgrid=True, zeroline=False),
+                dragmode=False,
             )
             _coal_chart_key = st.session_state.get("_coal_chart_reset", 0)
             if _ss_sel or _ss_filter:
@@ -1300,7 +1311,7 @@ elif page == "Geschäft":
                     st.rerun()
             _ev_coal = st.plotly_chart(
                 _fig_coal, use_container_width=True,
-                key=f"coalition_bar_{_coal_chart_key}", on_select="rerun",
+                key=f"coalition_bar_{_coal_chart_key}", on_select="rerun", config=_PCFG,
             )
             st.caption(
                 "Balken anklicken zum Filtern der Abstimmungsliste ↓  ·  "
@@ -1516,8 +1527,8 @@ elif page == "Geschäft":
             title="Abstimmung nach Fraktion",
             category_orders={"Fraktion": frac_order_labels()},
         )
-        fig.update_layout(legend_title="", xaxis_title="")
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(legend_title="", xaxis_title="", dragmode=False)
+        st.plotly_chart(fig, use_container_width=True, config=_PCFG)
 
     # Individual MP vote table
     st.subheader("Einzelstimmen")
@@ -1739,8 +1750,9 @@ elif page == "Mitglied":
             margin=dict(l=130, r=20, t=50, b=10),
             height=_height,
             shapes=_shapes,
+            dragmode=False,
         )
-        st.plotly_chart(_fig_aln, use_container_width=True)
+        st.plotly_chart(_fig_aln, use_container_width=True, config=_PCFG)
         st.caption(
             "Jede Zeile = ein Parlamentsmitglied, sortiert nach Fraktion und Übereinstimmung mit der eigenen Fraktionsmehrheit. "
             "Der farbige Streifen links zeigt die Fraktionszugehörigkeit (gleiche Farben wie in anderen Grafiken). "
@@ -1809,8 +1821,8 @@ elif page == "Mitglied":
                 hover_data=["Abweichend", "Total"],
                 title="Abweichungsrate nach Thema",
             )
-            fig.update_layout(xaxis_tickangle=-30, coloraxis_showscale=False)
-            st.plotly_chart(fig, use_container_width=True)
+            fig.update_layout(xaxis_tickangle=-30, coloraxis_showscale=False, dragmode=False)
+            st.plotly_chart(fig, use_container_width=True, config=_PCFG)
 
         # Per-Session data (computed here, rendered below before Kammernvergleich)
         active_df = dev_df[~dev_df["DecisionNorm"].isin(ABSENT)].copy()
@@ -1855,8 +1867,9 @@ elif page == "Mitglied":
                     yaxis={"categoryorder": "array",
                            "categoryarray": list(reversed(frac_order_labels()))},
                     showlegend=False,
+                    dragmode=False,
                 )
-                st.plotly_chart(fig3, use_container_width=True)
+                st.plotly_chart(fig3, use_container_width=True, config=_PCFG)
             else:
                 st.info("Zu wenig gemeinsame Abstimmungen für Richtungsanalyse.")
 
@@ -1998,8 +2011,8 @@ elif page == "Mitglied":
             st.markdown("---")
             fig2 = px.line(_sess_chart_df, x="Session", y="Abweichung (%)",
                            title="Abweichungsrate pro Session", markers=True)
-            fig2.update_layout(xaxis_tickangle=-20)
-            st.plotly_chart(fig2, use_container_width=True)
+            fig2.update_layout(xaxis_tickangle=-20, dragmode=False)
+            st.plotly_chart(fig2, use_container_width=True, config=_PCFG)
 
     # ── Kammernvergleich ──────────────────────────────────────────────────
     st.markdown("---")
@@ -2111,8 +2124,9 @@ elif page == "Fraktion":
                 paper_bgcolor="rgba(0,0,0,0)",
                 height=360,
                 margin=dict(l=20, r=20, t=20, b=20),
+                dragmode=False,
             )
-            st.plotly_chart(_fig_coh, use_container_width=True)
+            st.plotly_chart(_fig_coh, use_container_width=True, config=_PCFG)
             st.caption(
                 "Anteil der Abstimmungen, bei denen alle anwesenden Fraktionsmitglieder gleich stimmten. "
                 "Je höher, desto disziplinierter die Fraktion."
@@ -2147,10 +2161,11 @@ elif page == "Fraktion":
                 xaxis=dict(title="Abweichung vom Fraktionskurs (%)",
                            range=[-1, _strip_mp["Abweichung (%)"].max() + 2]),
                 yaxis_title="", height=360, margin=dict(l=10, r=10, t=20, b=10),
+                dragmode=False,
             )
             _ev_strip = st.plotly_chart(
                 _fig_mp_strip, use_container_width=True,
-                key="frac_strip", on_select="rerun",
+                key="frac_strip", on_select="rerun", config=_PCFG,
             )
             st.caption("Jeder Punkt ist ein Parlamentsmitglied. Punkt anklicken für Direktnavigation.")
             _mp_click_nav(_ev_strip, "frac_strip", members)
@@ -2201,8 +2216,8 @@ elif page == "Fraktion":
             height=max(350, len(dev_table) * 26),
         )
         fig2.update_layout(yaxis={"categoryorder": "total ascending"},
-                           coloraxis_showscale=False)
-        st.plotly_chart(fig2, use_container_width=True)
+                           coloraxis_showscale=False, dragmode=False)
+        st.plotly_chart(fig2, use_container_width=True, config=_PCFG)
 
         st.dataframe(dev_table.drop(columns=["PersonNumber"]),
                      use_container_width=True, height=300)
@@ -2249,8 +2264,9 @@ elif page == "Fraktion":
         fig3.update_layout(
             height=len(heatmap_df) * 36 + 60,
             yaxis=dict(dtick=1),
+            dragmode=False,
         )
-        st.plotly_chart(fig3, use_container_width=True)
+        st.plotly_chart(fig3, use_container_width=True, config=_PCFG)
 
     # ── Kammernvergleich ──────────────────────────────────────────────────
     st.markdown("---")
