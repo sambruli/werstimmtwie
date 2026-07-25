@@ -3,7 +3,6 @@ Swiss Parliament Voting Analyser — 7-page Streamlit app.
 Run: streamlit run app.py
 """
 
-import os
 from urllib.parse import urlencode
 import streamlit as st
 import pandas as pd
@@ -27,7 +26,6 @@ from analysis import (
     compute_coalition_data, COALITION_ORDER, COALITION_FLIP_DIRECTION,
 )
 from topics import TOPICS
-import summarizer
 
 TOPIC_EMOJI = {
     "Staatspolitik":                 "🏛️",
@@ -688,27 +686,6 @@ def _biz_click_nav(ev, key_suffix):
     )
     return True
 
-def ai_button(key, fn, *args):
-    if st.button("🤖 KI-Zusammenfassung", key=key):
-        with st.spinner("Claude analysiert…"):
-            try:
-                st.info(fn(*args))
-            except ValueError as e:
-                st.error(str(e))
-            except Exception as e:
-                st.error(f"Fehler: {e}")
-
-
-def check_api_key():
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not key:
-        inp = st.sidebar.text_input("ANTHROPIC_API_KEY", type="password",
-                                    help="Lokal gespeichert in .env")
-        if inp:
-            os.environ["ANTHROPIC_API_KEY"] = inp
-            (DB_PATH.parent / ".env").write_text(f"ANTHROPIC_API_KEY={inp}\n", encoding="utf-8")
-            st.sidebar.success("Key gespeichert")
-
 def no_data_stop():
     st.warning("Keine Daten verfügbar. Die Daten werden automatisch wöchentlich aktualisiert.")
     st.stop()
@@ -766,7 +743,6 @@ Bei knapper Mehrheit (z.B. 52%) ist eine abweichende Stimme weniger auffällig a
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 st.sidebar.title("🏛️ Wer stimmt wie?")
-check_api_key()
 
 
 _pages = ["Home", "Fraktion", "Mitglied", "Thema", "Geschäft"]
@@ -912,11 +888,6 @@ if page == "Home":
         "Abstimmung votierte."
     )
 
-    st.warning(
-        "**🤖 KI-Zusammenfassungen** — Jede Seite bietet eine KI-Zusammenfassung via Claude. "
-        "Bitte diese Funktion sparsam benutzen: die Kosten werden von Sam's persönlichem API-Budget gedeckt."
-    )
-
     st.markdown("---")
     st.subheader("Methodik")
     st.info(_METHODOLOGY)
@@ -928,9 +899,8 @@ if page == "Home":
         "keine Organisation dahinter. Ziel ist es, etwas mehr Transparenz über das tatsächliche "
         "Abstimmungsverhalten im Parlament zu schaffen, jenseits von Parteiprogrammen und "
         "Selbstdarstellung.\n\n"
-        "Die Infrastruktur- und API-Kosten werden aus dem persönlichen Budget gedeckt. "
-        "Bitte teile die App nur mit Personen, denen du vertraust, und geh sparsam mit den "
-        "KI-Zusammenfassungen um — jede Anfrage verursacht Kosten."
+        "Die Infrastrukturkosten werden aus dem persönlichen Budget gedeckt. "
+        "Bitte teile die App nur mit Personen, denen du vertraust."
     )
 
     import streamlit.components.v1 as _components
@@ -1112,9 +1082,6 @@ elif page == "Thema":
             if st.button("→ Zur Mitglied-Seite", key="thema_nav_btn"):
                 navigate_to_mp(_tp[_tn.index(_sel)])
 
-    st.markdown("---")
-    _thema_breakdown = dev_all[["FractionAbbr", "Abweichung (%)", "Abweichend", "Total"]].to_dict(orient="records") if not dev_all.empty else []
-    ai_button("sum_thema", summarizer.summarize_topic, topic, _thema_breakdown)
 
 # ════════════════════════════════════════════════════════════════════════════
 # 3. GESCHÄFT
@@ -1563,21 +1530,6 @@ elif page == "Geschäft":
     if st.button("→ Zur Mitglied-Seite", key="geschaeft_mp_btn"):
         navigate_to_mp(mp_pns[mp_names.index(_gsel)])
 
-    st.markdown("---")
-    _geschaeft_frac_votes = (
-        active_vote.groupby(["FractionAbbr", "DecisionNorm"])
-        .size().reset_index(name="Anzahl").to_dict(orient="records")
-        if not active_vote.empty else []
-    )
-    ai_button(
-        "sum_geschaeft",
-        summarizer.summarize_geschaeft,
-        biz_short,
-        str(subj),
-        str(my),
-        str(mn),
-        _geschaeft_frac_votes,
-    )
 
 # ════════════════════════════════════════════════════════════════════════════
 # 4. MITGLIED
@@ -1995,17 +1947,6 @@ elif page == "Mitglied":
         else:
             st.info("Keine Abweichungen gefunden.")
 
-        # AI summary
-        st.markdown("---")
-        dev_dicts = deviated.head(25).to_dict("records") if not deviated.empty else []
-        td_dicts  = topic_dev.to_dict("records") if not topic_dev.empty else []
-        if dev_dicts:
-            ai_button("sum_mp", summarizer.summarize_deviation_votes,
-                      mp_name, frac, dev_dicts)
-        else:
-            ai_button("sum_mp_p", summarizer.summarize_mp_profile,
-                      mp_name, frac, score, td_dicts)
-
         # Session timeline (moved here, just before Kammernvergleich)
         if _sess_chart_df is not None:
             st.markdown("---")
@@ -2228,9 +2169,6 @@ elif page == "Fraktion":
         _fs = st.selectbox("", _fn, key="frac_nav_sel", label_visibility="collapsed")
         if st.button("→ Zur Mitglied-Seite", key="frac_nav_btn"):
             navigate_to_mp(_fp[_fn.index(_fs)])
-
-        ai_button("sum_frac", summarizer.summarize_fraction_deviators,
-                  frac, dev_table.to_dict("records"))
 
     # ── Richtungs-Heatmap ─────────────────────────────────────────────────
     st.markdown("---")
