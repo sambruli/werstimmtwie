@@ -269,7 +269,7 @@ def get_all_mp_deviations():
     agg["Name"] = agg["FirstName"] + " " + agg["LastName"]
     return agg
 
-@st.cache_data(ttl=3600, show_spinner="Berechne Themen-Kohäsionsmatrix…")
+@st.cache_data(ttl=None, show_spinner="Berechne Themen-Kohäsionsmatrix…")
 def get_topic_fraction_cohesion():
     """Returns a (n_topics × n_fracs) DataFrame of cohesion % for the heatmap."""
     av = get_all_votes()
@@ -294,7 +294,7 @@ def get_topic_fraction_cohesion():
             rows.append({"Thema": topic_name, "Fraktion": frac_label(frac), "Kohäsion (%)": coh})
     return pd.DataFrame(rows)
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=None, show_spinner=False)
 def get_mp_fraction_alignment():
     """246×6 matrix: % of each MP's active votes agreeing with each fraction's majority."""
     av  = get_all_votes()
@@ -326,7 +326,7 @@ def get_mp_fraction_alignment():
     pivot["Name"] = pivot["FirstName"] + " " + pivot["LastName"]
     return pivot
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=None, show_spinner=False)
 def get_mp_pca():
     """PCA on the 6D fraction-alignment vectors → 2D political compass."""
     import numpy as np
@@ -363,7 +363,7 @@ def get_mp_pca():
     result = result.merge(dev, on="PersonNumber", how="left")
     return result
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=None, show_spinner=False)
 def get_vote_polarity_scatter():
     """Per roll-call: % of non-left members voting with left, and non-right with right.
     Center (GL, M-E) is included in both axes."""
@@ -421,7 +421,7 @@ def get_vote_polarity_scatter():
             .drop_duplicates("GroupKey"))
     return agg.merge(meta, on="GroupKey", how="left")
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=None, show_spinner=False)
 def get_direction_magnitude_scatter():
     """Per roll-call: Y = overall deviation rate, X = net political gravity of deviators,
     color = coalition type. Only polarising votes (left ≠ right bloc)."""
@@ -531,7 +531,7 @@ def get_direction_magnitude_scatter():
             .drop_duplicates("GroupKey"))
     return agg.merge(meta, on="GroupKey", how="left")
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=None, show_spinner=False)
 def get_sunburst_data():
     """Build ids/labels/parents/values/colors arrays for the Übersicht sunburst."""
     dev = get_all_mp_deviations()
@@ -562,7 +562,7 @@ def get_sunburst_data():
             colors.append("#cccccc")
     return ids, labels, parents, values, colors
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=None, show_spinner=False)
 def get_coalition_data() -> pd.DataFrame:
     return compute_coalition_data(get_all_votes(), get_members(), get_positions())
 
