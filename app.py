@@ -3,7 +3,6 @@ Swiss Parliament Voting Analyser — 7-page Streamlit app.
 Run: streamlit run app.py
 """
 
-import os
 from urllib.parse import urlencode
 import streamlit as st
 import pandas as pd
@@ -687,7 +686,6 @@ def _biz_click_nav(ev, key_suffix):
     )
     return True
 
-
 def no_data_stop():
     st.warning("Keine Daten verfügbar. Die Daten werden automatisch wöchentlich aktualisiert.")
     st.stop()
@@ -890,11 +888,6 @@ if page == "Home":
         "Abstimmung votierte."
     )
 
-    st.warning(
-        "**🤖 KI-Zusammenfassungen** — Jede Seite bietet eine KI-Zusammenfassung via Claude. "
-        "Bitte diese Funktion sparsam benutzen: die Kosten werden von Sam's persönlichem API-Budget gedeckt."
-    )
-
     st.markdown("---")
     st.subheader("Methodik")
     st.info(_METHODOLOGY)
@@ -906,9 +899,8 @@ if page == "Home":
         "keine Organisation dahinter. Ziel ist es, etwas mehr Transparenz über das tatsächliche "
         "Abstimmungsverhalten im Parlament zu schaffen, jenseits von Parteiprogrammen und "
         "Selbstdarstellung.\n\n"
-        "Die Infrastruktur- und API-Kosten werden aus dem persönlichen Budget gedeckt. "
-        "Bitte teile die App nur mit Personen, denen du vertraust, und geh sparsam mit den "
-        "KI-Zusammenfassungen um — jede Anfrage verursacht Kosten."
+        "Die Infrastrukturkosten werden aus dem persönlichen Budget gedeckt. "
+        "Bitte teile die App nur mit Personen, denen du vertraust."
     )
 
     import streamlit.components.v1 as _components
@@ -1090,7 +1082,6 @@ elif page == "Thema":
             if st.button("→ Zur Mitglied-Seite", key="thema_nav_btn"):
                 navigate_to_mp(_tp[_tn.index(_sel)])
 
-    st.markdown("---")
 
 # ════════════════════════════════════════════════════════════════════════════
 # 3. GESCHÄFT
@@ -1539,7 +1530,6 @@ elif page == "Geschäft":
     if st.button("→ Zur Mitglied-Seite", key="geschaeft_mp_btn"):
         navigate_to_mp(mp_pns[mp_names.index(_gsel)])
 
-    st.markdown("---")
 
 # ════════════════════════════════════════════════════════════════════════════
 # 4. MITGLIED
@@ -2179,7 +2169,6 @@ elif page == "Fraktion":
         _fs = st.selectbox("", _fn, key="frac_nav_sel", label_visibility="collapsed")
         if st.button("→ Zur Mitglied-Seite", key="frac_nav_btn"):
             navigate_to_mp(_fp[_fn.index(_fs)])
-
 
     # ── Richtungs-Heatmap ─────────────────────────────────────────────────
     st.markdown("---")
