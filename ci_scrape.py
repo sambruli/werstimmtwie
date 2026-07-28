@@ -95,6 +95,13 @@ def main() -> None:
             if "Decision" in combined.columns:
                 combined["Decision"] = combined["Decision"].astype(str)
 
+        if vp.exists():
+            prev_count = len(pd.read_parquet(vp, columns=["GroupKey"]))
+            if len(combined) < prev_count * 0.90:
+                log(f"  ERROR: combined row count ({len(combined):,}) is >10% below "
+                    f"previous ({prev_count:,}). Aborting to avoid overwriting good data.")
+                sys.exit(1)
+
         combined.to_parquet(vp, compression="zstd", index=False)
         log(f"  votes.parquet: {len(combined):,} rows")
 

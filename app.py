@@ -27,7 +27,6 @@ from analysis import (
     compute_coalition_data, COALITION_ORDER, COALITION_FLIP_DIRECTION,
 )
 from topics import TOPICS
-import summarizer
 
 TOPIC_EMOJI = {
     "Staatspolitik":                 "🏛️",
@@ -211,35 +210,35 @@ _PCFG = {"scrollZoom": False, "doubleClick": False, "displayModeBar": False}
 
 # ── Cached loaders ────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=None, show_spinner=False)
 def get_members():
     return load_members()
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=None, show_spinner=False)
 def get_all_votes():
     return load_all_votes()
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=None, show_spinner=False)
 def get_mp_votes(pn: int):
     av = get_all_votes()
     return av[av["PersonNumber"] == pn].copy()
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=None, show_spinner=False)
 def get_fraction_votes(abbr: str):
     av = get_all_votes()
     m  = get_members()
     pns = set(m.loc[m["FractionAbbr"] == abbr, "PersonNumber"])
     return av[av["PersonNumber"].isin(pns)].copy()
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=None, show_spinner=False)
 def get_sessions():
     return load_sessions()
 
-@st.cache_data(ttl=3600, show_spinner="Berechne Fraktionspositionen…")
+@st.cache_data(ttl=None, show_spinner="Berechne Fraktionspositionen…")
 def get_positions():
     return compute_fraction_positions(get_all_votes(), get_members())
 
-@st.cache_data(ttl=3600, show_spinner="Berechne Abweichungsraten…")
+@st.cache_data(ttl=None, show_spinner="Berechne Abweichungsraten…")
 def get_all_mp_deviations():
     """Deviation rate for every MP across all votes, using positions matrix for speed."""
     av  = get_all_votes()
@@ -688,26 +687,6 @@ def _biz_click_nav(ev, key_suffix):
     )
     return True
 
-def ai_button(key, fn, *args):
-    if st.button("🤖 KI-Zusammenfassung", key=key):
-        with st.spinner("Claude analysiert…"):
-            try:
-                st.info(fn(*args))
-            except ValueError as e:
-                st.error(str(e))
-            except Exception as e:
-                st.error(f"Fehler: {e}")
-
-
-def check_api_key():
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not key:
-        inp = st.sidebar.text_input("ANTHROPIC_API_KEY", type="password",
-                                    help="Lokal gespeichert in .env")
-        if inp:
-            os.environ["ANTHROPIC_API_KEY"] = inp
-            (DB_PATH.parent / ".env").write_text(f"ANTHROPIC_API_KEY={inp}\n", encoding="utf-8")
-            st.sidebar.success("Key gespeichert")
 
 def no_data_stop():
     st.warning("Keine Daten verfügbar. Die Daten werden automatisch wöchentlich aktualisiert.")
@@ -766,7 +745,6 @@ Bei knapper Mehrheit (z.B. 52%) ist eine abweichende Stimme weniger auffällig a
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 st.sidebar.title("🏛️ Wer stimmt wie?")
-check_api_key()
 
 
 _pages = ["Home", "Fraktion", "Mitglied", "Thema", "Geschäft"]
@@ -1113,8 +1091,6 @@ elif page == "Thema":
                 navigate_to_mp(_tp[_tn.index(_sel)])
 
     st.markdown("---")
-    _thema_breakdown = dev_all[["FractionAbbr", "Abweichung (%)", "Abweichend", "Total"]].to_dict(orient="records") if not dev_all.empty else []
-    ai_button("sum_thema", summarizer.summarize_topic, topic, _thema_breakdown)
 
 # ════════════════════════════════════════════════════════════════════════════
 # 3. GESCHÄFT
@@ -1564,20 +1540,6 @@ elif page == "Geschäft":
         navigate_to_mp(mp_pns[mp_names.index(_gsel)])
 
     st.markdown("---")
-    _geschaeft_frac_votes = (
-        active_vote.groupby(["FractionAbbr", "DecisionNorm"])
-        .size().reset_index(name="Anzahl").to_dict(orient="records")
-        if not active_vote.empty else []
-    )
-    ai_button(
-        "sum_geschaeft",
-        summarizer.summarize_geschaeft,
-        biz_short,
-        str(subj),
-        str(my),
-        str(mn),
-        _geschaeft_frac_votes,
-    )
 
 # ════════════════════════════════════════════════════════════════════════════
 # 4. MITGLIED
@@ -1995,17 +1957,6 @@ elif page == "Mitglied":
         else:
             st.info("Keine Abweichungen gefunden.")
 
-        # AI summary
-        st.markdown("---")
-        dev_dicts = deviated.head(25).to_dict("records") if not deviated.empty else []
-        td_dicts  = topic_dev.to_dict("records") if not topic_dev.empty else []
-        if dev_dicts:
-            ai_button("sum_mp", summarizer.summarize_deviation_votes,
-                      mp_name, frac, dev_dicts)
-        else:
-            ai_button("sum_mp_p", summarizer.summarize_mp_profile,
-                      mp_name, frac, score, td_dicts)
-
         # Session timeline (moved here, just before Kammernvergleich)
         if _sess_chart_df is not None:
             st.markdown("---")
@@ -2229,8 +2180,6 @@ elif page == "Fraktion":
         if st.button("→ Zur Mitglied-Seite", key="frac_nav_btn"):
             navigate_to_mp(_fp[_fn.index(_fs)])
 
-        ai_button("sum_frac", summarizer.summarize_fraction_deviators,
-                  frac, dev_table.to_dict("records"))
 
     # ── Richtungs-Heatmap ─────────────────────────────────────────────────
     st.markdown("---")
