@@ -6,6 +6,11 @@ on:
     # The job is a no-op when there are no new sessions.
     - cron: '0 5 * * 1'
   workflow_dispatch:   # allow manual trigger from the Actions tab
+    inputs:
+      force_session_ids:
+        description: "Comma-separated session IDs to force re-scrape (even if already marked complete)"
+        required: false
+        default: ""
 
 jobs:
   scrape:
@@ -24,6 +29,8 @@ jobs:
         run: pip install swissparlpy pandas pyarrow
 
       - name: Run scraper
+        env:
+          FORCE_SESSION_IDS: ${{ inputs.force_session_ids }}
         run: python ci_scrape.py
 
       - name: Commit updated parquets
