@@ -18,7 +18,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install pandas pyarrow openpyxl
+        run: pip install swissparlpy pandas pyarrow openpyxl
 
       - name: Run SR import
         run: python ci_import_sr.py
