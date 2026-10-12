@@ -11,6 +11,7 @@ Workflow:
 Run locally:  python ci_scrape.py
 """
 
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -39,6 +40,12 @@ def main() -> None:
     # only fetches sessions that appeared since the last run. A session whose
     # EndDate hasn't passed yet is seeded as Scraped=0 so its votes keep getting
     # re-fetched on every run until the session actually concludes.
+    # FORCE_SESSION_IDS (comma-separated session IDs) overrides this for a
+    # one-off manual backfill, e.g. when a past session's data turned out
+    # incomplete despite its EndDate having already passed.
+    force_ids = {
+        int(s) for s in os.environ.get("FORCE_SESSION_IDS", "").split(",") if s.strip()
+    }
     today = date.today().isoformat()
     sp = HERE / "sessions.parquet"
     existing_session_ids: set = set()
@@ -46,14 +53,17 @@ def main() -> None:
         existing_df = pd.read_parquet(sp)
         existing_session_ids = set(existing_df["ID"])
         log(f"Seeding DB with {len(existing_session_ids)} existing sessions...")
+        if force_ids:
+            log(f"  Forcing re-scrape of session(s): {sorted(force_ids)}")
         with get_conn() as conn:
             for _, row in existing_df.iterrows():
+                sid = int(row["ID"])
                 end_date = str(row.get("EndDate", ""))[:10]
-                scraped = 1 if end_date and end_date < today else 0
+                scraped = 0 if sid in force_ids else (1 if end_date and end_date < today else 0)
                 conn.execute(
                     "INSERT OR IGNORE INTO sessions "
                     "(ID, Name, StartDate, EndDate, Legislature, Scraped) VALUES (?,?,?,?,?,?)",
-                    (int(row["ID"]), str(row.get("Name", "")),
+                    (sid, str(row.get("Name", "")),
                      str(row.get("StartDate", ""))[:10], end_date, 52, scraped),
                 )
 
