@@ -1,0 +1,33 @@
+name: Import SR Votes
+
+on:
+  workflow_dispatch:   # manual trigger from the Actions tab — SR votes have no API,
+                        # they come from a per-session XLS file published on parlament.ch
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to push the updated votes.parquet
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pandas pyarrow openpyxl
+
+      - name: Run SR import
+        run: python ci_import_sr.py
+
+      - name: Commit updated votes.parquet
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add votes.parquet
+          git diff --staged --quiet \
+            || git commit -m "Import SR votes $(date -u +%Y-%m-%d)"
+          git push
