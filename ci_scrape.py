@@ -12,6 +12,7 @@ Run locally:  python ci_scrape.py
 """
 
 import sys
+from datetime import date
 from pathlib import Path
 import pandas as pd
 
@@ -35,21 +36,25 @@ def main() -> None:
     _ensure_columns()
 
     # Seed sessions table with already-scraped session IDs so update_scrape
-    # only fetches sessions that appeared since the last run.
+    # only fetches sessions that appeared since the last run. A session whose
+    # EndDate hasn't passed yet is seeded as Scraped=0 so its votes keep getting
+    # re-fetched on every run until the session actually concludes.
+    today = date.today().isoformat()
     sp = HERE / "sessions.parquet"
     existing_session_ids: set = set()
     if sp.exists():
         existing_df = pd.read_parquet(sp)
         existing_session_ids = set(existing_df["ID"])
-        log(f"Seeding DB with {len(existing_session_ids)} existing sessions (Scraped=1)...")
+        log(f"Seeding DB with {len(existing_session_ids)} existing sessions...")
         with get_conn() as conn:
             for _, row in existing_df.iterrows():
+                end_date = str(row.get("EndDate", ""))[:10]
+                scraped = 1 if end_date and end_date < today else 0
                 conn.execute(
                     "INSERT OR IGNORE INTO sessions "
-                    "(ID, Name, StartDate, EndDate, Legislature, Scraped) VALUES (?,?,?,?,?,1)",
+                    "(ID, Name, StartDate, EndDate, Legislature, Scraped) VALUES (?,?,?,?,?,?)",
                     (int(row["ID"]), str(row.get("Name", "")),
-                     str(row.get("StartDate", ""))[:10],
-                     str(row.get("EndDate", ""))[:10], 52),
+                     str(row.get("StartDate", ""))[:10], end_date, 52, scraped),
                 )
 
     # Scrape current active members and discover sessions from the API.
